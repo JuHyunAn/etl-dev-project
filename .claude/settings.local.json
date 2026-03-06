@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(gradle:*)",
+      "Bash(\"$GRADLE_BIN\" bootRun:*)",
+      "Bash(JAVA_HOME=\"$JAVA_HOME\" \"$GRADLE_BIN\" bootRun:*)",
+      "Bash(docker:*)",
+      "Bash(pg_isready:*)",
+      "Bash(\"$DOCKER\" ps:*)",
+      "Bash(\"/c/Program Files/Docker/Docker/resources/bin/docker.exe\" ps:*)",
+      "Bash(\"/c/Program Files/Docker/Docker/resources/bin/docker.exe\" run:*)",
+      "Bash(docker.exe run:*)",
+      "Bash(docker.exe:*)",
+      "Bash(docker.exe exec:*)",
+      "Bash(netstat:*)",
+      "Bash(tasklist:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(powershell:*)",
+      "Bash(curl:*)",
+      "Bash(python:*)",
+      "Bash(xargs sh:*)",
+      "Bash(\"/mnt/c/Program Files/Docker/Docker/resources/bin/docker\":*)",
+      "Bash(\"/c/Program Files/Docker/Docker/resources/bin/docker\":*)",
+      "Bash(\"/c/Program Files/Docker/Docker/resources/bin/docker.exe\" start:*)",
+      "Read(//tmp/**)"
+    ]
+  }
+}

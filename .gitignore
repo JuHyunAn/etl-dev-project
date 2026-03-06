@@ -1,0 +1,36 @@
+# .gitignore
+
+# Environment variables
+.env
+
+# Cache files
+.schema_cache.json
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Frontend dependencies
+node_modules/
+dist/
+build/
+.eslintcache
+
+# Logs
+*.log
+
+# Workspace specific
+# .claude/
+.gemini/
+.agents/
+.agent/
+_agents/
+_agent/

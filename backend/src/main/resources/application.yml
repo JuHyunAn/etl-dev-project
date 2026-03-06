@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: etl-platform
+
+  datasource:
+    url: jdbc:postgresql://localhost:5433/etl_platform
+    username: postgres
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    show-sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+server:
+  port: 8080
+
+etl:
+  encryption:
+    secret: ${ENCRYPTION_SECRET:default-dev-secret-change-in-prod}
+  execution:
+    timeout-seconds: 3600
+    max-rows-preview: 100
+
+logging:
+  level:
+    com.platform.etl: DEBUG
+    org.flywaydb: INFO
