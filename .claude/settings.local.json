@@ -24,7 +24,10 @@
       "Bash(\"/mnt/c/Program Files/Docker/Docker/resources/bin/docker\":*)",
       "Bash(\"/c/Program Files/Docker/Docker/resources/bin/docker\":*)",
       "Bash(\"/c/Program Files/Docker/Docker/resources/bin/docker.exe\" start:*)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(JAVA_HOME=\"/c/Users/안주현/.vscode/extensions/redhat.java-1.53.0-win32-x64/jre/21.0.10-win32-x86_64\" PATH=\"$JAVA_HOME/bin:$PATH\" java:*)",
+      "Bash(cmd:*)",
+      "Bash(node:*)"
     ]
   }
 }

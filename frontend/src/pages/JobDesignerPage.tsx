@@ -18,7 +18,7 @@ import SchemaTree from '../components/job/SchemaTree'
 import AiAgentPanel from '../components/job/AiAgentPanel'
 import { nodeTypes } from '../components/job/CustomNodes'
 import type { ComponentType, JobIR, ExecutionResult, ColumnInfo } from '../types'
-import type { AiGraphSpec } from '../api/ai'
+import type { AiGraphSpec, AiPatchSpec } from '../api/ai'
 import { buildAutoMappings } from '../utils/mapping'
 import Editor from '@monaco-editor/react'
 
@@ -104,6 +104,10 @@ export default function JobDesignerPage() {
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
   const [mappingTarget, setMappingTarget] = useState<{ nodeId: string; nodeLabel: string } | null>(null)
   const [schemaTreeCollapsed, setSchemaTreeCollapsed] = useState(false)
+  const [schemaHeight, setSchemaHeight] = useState(240)
+  const schemaResizingRef = useRef(false)
+  const schemaResizeStartY = useRef(0)
+  const schemaResizeStartH = useRef(0)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
 
   // 커넥션 목록이 없으면 직접 로드 (다른 페이지 거치지 않고 진입 시 대비)
@@ -257,6 +261,43 @@ export default function JobDesignerPage() {
     setSelectedNode(null)
   }, [setNodes, setEdges])
 
+  const handlePatchNodes = useCallback((patches: AiPatchSpec['patches']) => {
+    setNodes(ns => ns.map(n => {
+      const patch = patches.find(p => p.nodeId === n.id)
+      if (!patch) return n
+      const d = n.data as EtlNodeData
+      return {
+        ...n,
+        data: {
+          ...d,
+          ...(patch.label ? { label: patch.label } : {}),
+          config: patch.config ? { ...d.config, ...patch.config } : d.config,
+        },
+      }
+    }))
+  }, [setNodes])
+
+  const handleSchemaResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    schemaResizingRef.current = true
+    schemaResizeStartY.current = e.clientY
+    schemaResizeStartH.current = schemaHeight
+
+    const onMove = (ev: MouseEvent) => {
+      if (!schemaResizingRef.current) return
+      const delta = schemaResizeStartY.current - ev.clientY
+      const next = Math.min(600, Math.max(80, schemaResizeStartH.current + delta))
+      setSchemaHeight(next)
+    }
+    const onUp = () => {
+      schemaResizingRef.current = false
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [schemaHeight])
+
   const handleSave = async () => {
     if (!projectId || !jobId) return
     setSaving(true)
@@ -291,6 +332,13 @@ export default function JobDesignerPage() {
       ...n,
       data: { ...(n.data as EtlNodeData), status: 'running' },
     })))
+    // 실행 시작: 엣지 초기화 + animated
+    setEdges(es => es.map(e => ({
+      ...e,
+      label: undefined,
+      animated: true,
+      style: { stroke: '#58a6ff', strokeWidth: 2 },
+    })))
 
     try {
       const ir = flowToIR(jobId, nodes, edges)
@@ -315,6 +363,33 @@ export default function JobDesignerPage() {
           },
         }
       }))
+
+      // 완료: 엣지에 rows + 색상 표기
+      setEdges(es => es.map(e => {
+        const nr = result.nodeResults[e.source]
+        if (nr?.rowsProcessed !== undefined) {
+          const isZero = nr.rowsProcessed === 0
+          const jobFailed = result.status === 'FAILED'
+          const isError = isZero && jobFailed
+          const color = isError ? '#f85149' : '#3fb950'
+          const rowLabel = isZero
+            ? `0 rows${isError ? ' (error)' : ''}`
+            : `${nr.rowsProcessed.toLocaleString()} rows${nr.durationMs ? ` in ${nr.durationMs}ms` : ''}`
+          return {
+            ...e,
+            animated: false,
+            style: { stroke: color, strokeWidth: 2 },
+            label: rowLabel,
+            labelStyle: { fill: color, fontSize: 10, fontFamily: 'monospace' },
+            labelBgStyle: { fill: '#0d1117', fillOpacity: 0.9 },
+            labelBgPadding: [4, 2] as [number, number],
+            labelBgBorderRadius: 3,
+          }
+        }
+        // nodeResult 없으면 전체 결과 기반 색상만
+        const color = result.status === 'SUCCESS' ? '#3fb950' : '#f85149'
+        return { ...e, animated: false, style: { stroke: color, strokeWidth: 2 } }
+      }))
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : 'Execution failed'
       setExecutionResult({
@@ -329,6 +404,11 @@ export default function JobDesignerPage() {
       setNodes(ns => ns.map(n => ({
         ...n,
         data: { ...(n.data as EtlNodeData), status: 'failed', rowsProcessed: undefined, durationMs: undefined },
+      })))
+      setEdges(es => es.map(e => ({
+        ...e,
+        animated: false,
+        style: { stroke: '#f85149', strokeWidth: 2 },
       })))
     } finally {
       setRunning(false)
@@ -714,11 +794,18 @@ export default function JobDesignerPage() {
         {/* AI Agent Panel - 슬라이드 애니메이션 */}
         <div className={`flex-shrink-0 h-full overflow-hidden transition-all duration-300 ease-in-out
           ${aiPanelOpen ? 'w-[320px]' : 'w-0'}`}>
-          <AiAgentPanel onApplyGraph={handleApplyAiGraph} connections={connections} />
+          <AiAgentPanel
+            onApplyGraph={handleApplyAiGraph}
+            onPatchNodes={handlePatchNodes}
+            connections={connections}
+            executionResult={executionResult}
+            nodes={nodes}
+            edges={edges}
+          />
         </div>
 
         {/* Right Panel: Properties + Schema Tree */}
-        <div className="w-[260px] flex-shrink-0 flex flex-col border-l border-[#21262d] bg-[#161b27] relative">
+        <div className="w-[300px] flex-shrink-0 flex flex-col border-l border-[#21262d] bg-[#161b27] relative">
           {/* AI 패널 토글 탭 버튼 */}
           <button
             onClick={() => setAiPanelOpen(p => !p)}
@@ -757,8 +844,19 @@ export default function JobDesignerPage() {
           </div>
 
           {/* Schema Tree Section */}
-          <div className={`flex-shrink-0 border-t border-[#21262d] flex flex-col
-            transition-all duration-200 ${schemaTreeCollapsed ? 'h-8' : 'h-[240px]'}`}>
+          <div
+            className="flex-shrink-0 border-t border-[#21262d] flex flex-col"
+            style={{ height: schemaTreeCollapsed ? 32 : schemaHeight }}
+          >
+            {/* Resize Handle */}
+            {!schemaTreeCollapsed && (
+              <div
+                onMouseDown={handleSchemaResizeStart}
+                className="h-1.5 flex-shrink-0 cursor-ns-resize group flex items-center justify-center"
+              >
+                <div className="w-8 h-0.5 rounded-full bg-[#30363d] group-hover:bg-[#58a6ff] transition-colors" />
+              </div>
+            )}
             <button
               onClick={() => setSchemaTreeCollapsed(c => !c)}
               className="flex items-center justify-between px-3 py-2 hover:bg-[#252d3d] transition-colors flex-shrink-0">

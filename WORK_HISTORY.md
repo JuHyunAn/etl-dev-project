@@ -1,6 +1,6 @@
 # ETL Platform - Work History & Reference
 
-> 최종 업데이트: 2026-03-05
+> 최종 업데이트: 2026-03-06
 
 ---
 
@@ -63,11 +63,15 @@ VITE_OPENAI_API_KEY=sk-proj-...
 # Google Gemini
 VITE_GEMINI_API_KEY=AIzaSy...
 
-# 기본 제공사 선택: claude | openai | gemini
+# xAI Grok
+VITE_GROK_API_KEY=xai-...
+
+# 기본 제공사 선택: claude | openai | gemini | grok
 VITE_AI_DEFAULT_PROVIDER=gemini
 ```
 
 > `frontend/.env.example` 참고. `.env`는 git에 커밋하지 않을 것.
+> **Grok**: `api.x.ai`는 브라우저 직접 호출 시 CORS 차단. Vite 개발 서버 프록시(`/xai-proxy`)를 통해 우회. vite.config.ts 변경 후 반드시 서버 재시작 필요.
 
 ### 2-5. 서버 기동 명령어
 
@@ -237,6 +241,7 @@ ETL_Platform/
 | Anthropic Claude | `https://api.anthropic.com/v1/messages` | `anthropic-dangerous-allow-browser: true` 헤더 필요 |
 | OpenAI | `https://api.openai.com/v1/chat/completions` | Bearer 토큰 인증 |
 | Google Gemini | `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` | URL 쿼리 파라미터로 키 전달 |
+| xAI Grok | `/xai-proxy/v1/chat/completions` → `https://api.x.ai` | Vite 프록시 경유 (CORS 우회), OpenAI 호환 포맷 |
 
 ---
 
@@ -323,9 +328,28 @@ ETL_Platform/
 - **Execution Logs**: 실행 결과, 오류 메시지, 노드별 처리 행 수
 - **Job Summary**: 잡 구성 요약 통계 (총 노드 수, 카테고리별 분류, 데이터 흐름, 타입별 상세)
 
-#### 노드 실행 결과 표시
-- 실행 완료 후 각 노드에 처리 행 수 및 실행 시간 표시: `1,234 rows in 320ms`
+#### 노드 UI 개선
 - T_JDBC_OUTPUT 노드에 Write Mode 배지 표시 (INSERT / UPSERT 등)
+- 노드 선택 시 상단에 NodeToolbar 표시 (React Flow 포털 렌더링으로 드래그 이벤트 충돌 없음)
+  - `+` 버튼: 노드 복제 (동일 타입, 위치 +30 offset)
+  - `−` 버튼: 노드 삭제 (deleteElements)
+
+#### 엣지 실행 결과 표시
+- 실행 완료 후 각 엣지(연결선)에 처리 행 수 및 시간 표시: `1,234 rows · 320ms`
+- 색상 규칙:
+  - 실행 중: 파란색 animated 엣지
+  - rows > 0: 초록색 (`#3fb950`)
+  - rows = 0 + JOB FAILED: 빨간색 + `(error)` 텍스트
+  - rows = 0 + JOB SUCCESS: 초록색 (정상, error 표기 없음)
+  - 실행 오류(catch): 전체 엣지 빨간색
+
+#### Schema Browser
+- 높이 마우스 드래그로 조절 (80px ~ 600px, document-level mousemove/mouseup)
+
+#### 속성 패널
+- 너비 260px → 300px
+- 컬럼 미리보기 영역 폰트 크기 2단계씩 확대
+- JSON textarea: `resize-none` → `resize-y`
 
 #### 실행
 - Preview Mode 체크박스 (100행 제한 미리보기)
@@ -335,30 +359,72 @@ ETL_Platform/
 ### 6-5. AI Agent
 
 #### AI Agent 패널 (우측 슬라이드, AiAgentPanel.tsx)
-- **지원 공급자**: Claude (Anthropic), ChatGPT (OpenAI), Gemini (Google)
+- **지원 공급자**: Claude (Anthropic), ChatGPT (OpenAI), Gemini (Google), Grok (xAI)
 - **지원 모델**:
   - Claude: Sonnet 4.6, Opus 4.6, Haiku 4.5
   - OpenAI: GPT-4o, GPT-4o mini, GPT-4 Turbo
-  - Gemini: 2.0 Flash, 1.5 Pro, 1.5 Flash
-- 공급자/모델 드롭다운 선택
+  - Gemini: 2.5 Flash, 2.5 Flash Lite, 2.0 Flash
+  - Grok: Grok 3, Grok 3 Mini, Grok 2
+- 공급자/모델 드롭다운 선택 (전환 시 에러 상태 자동 초기화)
 - API 키 미설정 시 경고 배너 표시
-- 채팅 히스토리 (멀티턴 대화 유지)
-- AI 응답 내 JSON 코드 블록 렌더링 + "캔버스에 적용" 버튼
-  - 버튼 클릭 시 노드+엣지 JSON을 캔버스에 자동 배치
-- 예시 프롬프트 버튼 (빈 채팅 상태에서 표시)
+- 채팅 히스토리 (멀티턴 대화 유지), 대화 초기화 버튼
 - Enter 전송, Shift+Enter 줄바꿈
+- 최신 AI 응답 메시지에 파란 리플 테두리 하이라이트 (hover 시 해제)
 
-#### AI Agent 토글 버튼
+#### JSON 코드 블록 렌더링 (JsonBlock / CodeBlock)
+- AI 응답 내 ` ```json ``` ` 블록을 접힌 상태로 렌더링 (기본 최소화)
+- 헤더 클릭으로 펼치기/접기, 내용 요약 표시 (노드 N개·엣지 M개 / 수정 제안 N개 노드)
+- **다중 블록 지원**: `CodeBlock`이 재귀 처리하여 응답 내 JSON 블록이 여러 개여도 모두 정상 렌더링
+
+#### 새 파이프라인 생성 (extractGraphSpec)
+- `{ nodes[], edges[] }` 포맷 감지 → "캔버스에 적용" 초록 버튼
+- 버튼 클릭 시 노드+엣지를 캔버스에 자동 배치
+- T_JDBC_INPUT/OUTPUT 노드에 columnMap 데이터 자동 주입
+
+#### 기존 파이프라인 패치 (extractPatchSpec)
+- `{ "action": "patch", "patches": [...] }` 포맷 감지 → 보라색 "파이프라인에 적용" 버튼
+- 전체 코드 블록 순서대로 탐색 (첫 번째 블록이 patch가 아니어도 올바르게 감지)
+- 패치 항목별 nodeId, 수정 키, reason 표시
+- 적용 클릭 시: 해당 노드 config 부분 업데이트 + "적용 완료" 상태 전환 + 수정 항목 요약 표시
+
+#### DB 커넥션 컨텍스트 주입
+- 패널 상단에서 커넥션 선택 → 테이블 목록 + 전체 컬럼 병렬 로드
+- 로드된 스키마를 AI 시스템 프롬프트에 자동 주입 (테이블명, 컬럼명·타입·PK·NN)
+
+#### 파이프라인 IR 컨텍스트 주입
+- 현재 캔버스의 노드/엣지 구조를 AI 시스템 프롬프트에 주입
+- columns 배열은 토큰 절약을 위해 개수만 전달 (`[N columns loaded]`)
+- AI가 patch 응답 시 정확한 nodeId 사용 가능
+
+#### 실행 결과 컨텍스트 주입
+- 실행 결과(status, nodeResults, logs, errorMessage)를 AI 시스템 프롬프트에 주입
+- 헤더에 실행 상태 배지 표시 (✓ 실행완료 / ✗ 실행실패)
+
+#### 빠른 질문 버튼 (상황별)
+| 상태 | 버튼 |
+|------|------|
+| 실행 전 | 파이프라인 검토 / SQL 최적화 / 검증 단계 추가 |
+| 실행 실패(FAILED) | 에러 원인 분석 / 파이프라인 검토 / **자동 수정 (활성)** |
+| 실행 성공(SUCCESS) | 결과 분석 / 최적화 제안 / ~~자동 수정 (비활성, disabled)~~ |
+
+- **결과 분석**: 실행 결과 + 파이프라인 구조 종합 분석. 문제 발견 시 patch JSON 자동 포함
+- **자동 수정**: JOB FAILED 시에만 활성화. SUCCESS 시 disabled(회색, tooltip 표시)
+
+#### AI 토글 버튼
 - `ai.png` 이미지 사용 (Vite `public/` 정적 자산으로 제공)
 - 위치: 우측 패널 왼쪽 상단 영역 (`top-[38%]`)
-- **패널 닫힌 상태**: `w-12 h-20` 크기, ai.png 이미지 표시
-- **패널 열린 상태**: `w-3 h-16` 얇은 세로 띠로 축소 (이미지 숨김, 콘텐츠 가림 방지)
+- 패널 닫힌 상태: `w-12 h-20` 크기, ai.png 이미지 표시
+- 패널 열린 상태: `w-3 h-16` 얇은 세로 띠로 축소 (이미지 숨김)
 - 슬라이드 애니메이션: `transition-all duration-300 ease-in-out`
 
-#### AI 시스템 프롬프트 (SYSTEM_PROMPT in ai.ts)
-- ETL 컴포넌트 타입 목록 및 역할 설명
-- 응답 형식 지정: 설명 + JSON 코드 블록 (`nodes[]` + `edges[]`)
-- 사용자 언어로 응답 지시
+#### AI 시스템 프롬프트 구조 (SYSTEM_PROMPT in api/ai.ts)
+| 섹션 | 역할 |
+|------|------|
+| Response Style | 간결 응답 규칙 (3문장 이내, 불릿, 불필요 문구 금지) |
+| 1. New Pipeline Design | `{ nodes[], edges[] }` 포맷 출력 규칙 |
+| 2. Existing Pipeline Fix | 분석 + patch JSON 동시 출력 규칙, nodeId 규칙 |
+| 3. Result Analysis & Review | 결과 분석 규칙, 의심 결과 플래그 필수 (0-row, 불일치 등), fixable 시 patch 포함 |
+| 4. Error Analysis | FAILED 시 원인·영향노드·수정 포맷, patch JSON 자동 첨부 |
 
 ### 6-6. 실행 이력
 - 마지막 실행 결과 표시 (ExecutionsPage)
@@ -447,6 +513,7 @@ Job은 `ir_json` (JSONB)으로 저장됨.
 - [ ] 폴더 구조 (folders 테이블 존재, UI 미구현)
 - [ ] Oracle / MariaDB 실 연결 테스트
 - [ ] AI Agent: 백엔드 프록시 구현 (현재 프론트엔드에서 직접 호출 → CORS/키 노출 위험)
+- [ ] AI Agent: Grok 프로덕션 배포 시 서버사이드 프록시 전환 (현재 Vite dev 프록시만 지원)
 
 ---
 
@@ -460,3 +527,32 @@ Job은 `ir_json` (JSONB)으로 저장됨.
 - **컬럼 정보 저장**: 노드 config의 `columns` 필드에 `ColumnInfo[]` 저장됨 (IR로 직렬화되어 잡 저장/불러오기 시 유지)
 - **AI API 키 보안**: 현재 Vite env로 브라우저에 노출됨. 프로덕션 전 백엔드 프록시 전환 필요
 - **ai.png 경로**: Vite 정적 자산은 `public/` 폴더 기준 `/ai.png`로 접근. `img/` 폴더의 원본은 별도 복사 필요
+- **Grok CORS**: `api.x.ai` CORS 미지원으로 Vite 프록시 경유. `vite.config.ts` 변경 후 `npm run dev` 재시작 필수
+- **NodeToolbar (React Flow v12)**: 노드 내부 DOM에 버튼 배치 시 React Flow 네이티브 드래그 이벤트와 충돌 발생. NodeToolbar 포털 렌더링으로 해결
+- **extractPatchSpec/extractGraphSpec**: 응답 내 첫 번째 JSON 블록만 검사하면 다중 블록 응답에서 patch 감지 실패. 전체 블록 순회(`regex.exec` 루프)로 수정 완료
+
+---
+
+## 11. 변경 이력
+
+### 2026-03-06
+
+#### Job Designer 캔버스 개선
+- **T_LOG_ROW 양방향 연결**: TOS 설계 기준 passthrough 컴포넌트(T_LOG_ROW)는 Input/Output 핸들 모두 표시. T_DIE만 Output 전용 유지
+- **NodeToolbar 추가**: 노드 선택 시 복제(+)/삭제(−) 버튼 표시. React Flow 포털로 렌더링하여 드래그 이벤트 충돌 완전 해소
+- **엣지 실행 결과 표시**: 실행 중 animated 파란 엣지, 완료 후 row수·시간을 엣지 레이블로 표시 (rows>0 초록, JOB FAIL+0row 빨간+error)
+- **Schema Browser 드래그 리사이즈**: 구분선 드래그로 높이 80~600px 자유 조절
+- **속성 패널 너비**: 260px → 300px, 컬럼 미리보기 폰트 2단계 확대
+- **Delete/Backspace 키**: 선택된 노드/엣지 삭제 (`deleteKeyCode` 설정)
+
+#### AI Agent 전면 개편
+- **Grok (xAI) 공급자 추가**: Grok 3 / 3 Mini / 2, Vite 프록시(`/xai-proxy`)로 CORS 해결
+- **공급자 전환 시 에러 초기화**: provider/model 변경 시 기존 오류 메시지 자동 클리어
+- **파이프라인 IR 컨텍스트**: 현재 캔버스 노드/엣지를 AI에게 전달 (columns는 개수만)
+- **실행 결과 컨텍스트**: 실행 로그·nodeResults·오류를 AI에게 전달
+- **patch 포맷 지원**: AI가 `{ "action": "patch", "patches": [...] }` 형식으로 응답 시 보라색 "파이프라인에 적용" 버튼 표시
+- **patch 적용 피드백**: 적용 후 "적용 완료" 상태 전환 + 수정 항목 요약 표시
+- **다중 JSON 블록 렌더링**: `CodeBlock` 재귀 처리, `extractPatchSpec/extractGraphSpec` 전체 블록 탐색
+- **빠른 질문 버튼 재설계**: 상황별(실행전/FAILED/SUCCESS) 버튼 세트. 자동 수정은 FAILED 시만 활성화
+- **최신 메시지 하이라이트**: 응답 도착 시 메시지 버블에 conic-gradient 회전 테두리 + 리플 애니메이션. hover 시 해제
+- **시스템 프롬프트 개선**: 간결 응답 강제, 의심 결과 플래그 필수, 분석+patch 동시 출력 규칙

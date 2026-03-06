@@ -10,6 +10,12 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
+      '/xai-proxy': {
+        target: 'https://api.x.ai',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/xai-proxy/, ''),
+        secure: true,
+      },
     },
   },
 })

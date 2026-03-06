@@ -1,5 +1,5 @@
-import React, { memo } from 'react'
-import { Handle, Position, NodeProps } from '@xyflow/react'
+import React, { memo, useCallback } from 'react'
+import { Handle, Position, NodeProps, NodeToolbar, useReactFlow } from '@xyflow/react'
 import type { ComponentType } from '../../types'
 
 interface NodeData {
@@ -79,14 +79,54 @@ function ComponentIcon({ type }: { type: ComponentType }) {
   )
 }
 
-const ETLNode = memo(({ data, selected }: NodeProps) => {
+const ETLNode = memo(({ id, data, selected }: NodeProps) => {
   const nodeData = data as unknown as NodeData
   const colors = getGroupColors(nodeData.componentType)
   const statusClass = STATUS_COLORS[nodeData.status ?? 'idle']
   const isInput = nodeData.componentType.endsWith('_INPUT') || nodeData.componentType === 'T_PRE_JOB'
-  const isOutput = nodeData.componentType.endsWith('_OUTPUT') || nodeData.componentType === 'T_POST_JOB' || nodeData.componentType === 'T_LOG_ROW' || nodeData.componentType === 'T_DIE'
+  const isOutput = nodeData.componentType.endsWith('_OUTPUT') || nodeData.componentType === 'T_POST_JOB' || nodeData.componentType === 'T_DIE'
+
+  const { deleteElements, addNodes, getNode } = useReactFlow()
+
+  const handleDelete = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    deleteElements({ nodes: [{ id }] })
+  }, [id, deleteElements])
+
+  const handleDuplicate = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    const current = getNode(id)
+    if (!current) return
+    addNodes({
+      ...current,
+      id: `${nodeData.componentType}-${Date.now()}`,
+      position: { x: current.position.x + 30, y: current.position.y + 30 },
+      selected: false,
+    })
+  }, [id, getNode, addNodes, nodeData.componentType])
 
   return (
+    <>
+      {/* NodeToolbar: React Flow 포털에 렌더링되어 이벤트 충돌 없음 */}
+      <NodeToolbar isVisible={selected} position={Position.Top} align="end" offset={6}>
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={handleDuplicate}
+            title="복제"
+            className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold
+              bg-[#161b27] border border-[#30363d] text-[#8b949e]
+              hover:bg-[#0d1f35] hover:border-[#58a6ff] hover:text-[#58a6ff] transition-colors shadow-md"
+          >+</button>
+          <button
+            onClick={handleDelete}
+            title="삭제"
+            className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold
+              bg-[#161b27] border border-[#30363d] text-[#8b949e]
+              hover:bg-[#2d0f0f] hover:border-[#f85149] hover:text-[#f85149] transition-colors shadow-md"
+          >−</button>
+        </div>
+      </NodeToolbar>
+
     <div
       className={`relative min-w-[140px] rounded-lg border-2 transition-all select-none
         ${selected ? 'border-[#58a6ff] shadow-[0_0_0_3px_rgba(88,166,255,0.2)]' : `border-[${colors.border}]`}
@@ -128,33 +168,6 @@ const ETLNode = memo(({ data, selected }: NodeProps) => {
           </div>
         )}
 
-        {/* Status indicator */}
-        {nodeData.status && nodeData.status !== 'idle' && (
-          <div className="mt-1.5 flex items-center gap-1">
-            {nodeData.status === 'running' && (
-              <><span className="w-1.5 h-1.5 rounded-full bg-[#58a6ff] animate-pulse" />
-              <span className="text-[10px] text-[#58a6ff]">Running...</span></>
-            )}
-            {nodeData.status === 'success' && (
-              <div className="flex flex-col gap-0.5">
-                <div className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#3fb950]" />
-                  <span className="text-[10px] text-[#3fb950]">Done</span>
-                </div>
-                {(nodeData.rowsProcessed !== undefined || nodeData.durationMs !== undefined) && (
-                  <span className="text-[9px] text-[#484f58] pl-2.5 font-mono">
-                    {nodeData.rowsProcessed !== undefined && `${nodeData.rowsProcessed.toLocaleString()} rows`}
-                    {nodeData.durationMs !== undefined && ` in ${nodeData.durationMs}ms`}
-                  </span>
-                )}
-              </div>
-            )}
-            {nodeData.status === 'failed' && (
-              <><span className="w-1.5 h-1.5 rounded-full bg-[#f85149]" />
-              <span className="text-[10px] text-[#f85149]">Failed</span></>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Output Handle */}
@@ -167,6 +180,7 @@ const ETLNode = memo(({ data, selected }: NodeProps) => {
         />
       )}
     </div>
+    </>
   )
 })
 

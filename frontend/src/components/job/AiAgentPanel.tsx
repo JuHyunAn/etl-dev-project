@@ -1,34 +1,48 @@
 import React, { useEffect, useRef, useState } from 'react'
+import type { Node, Edge } from '@xyflow/react'
 import { Spinner } from '../ui'
 import {
   AI_MODELS, ENV_KEYS, DEFAULT_PROVIDER,
-  sendAiMessage, extractGraphSpec,
-  type AiMessage, type AiProvider, type AiGraphSpec,
+  sendAiMessage, extractGraphSpec, extractPatchSpec,
+  type AiMessage, type AiProvider, type AiGraphSpec, type AiPatchSpec,
 } from '../../api/ai'
 import { schemaApi } from '../../api'
-import type { Connection, TableInfo, ColumnInfo } from '../../types'
+import type { Connection, TableInfo, ColumnInfo, ExecutionResult } from '../../types'
+
+interface NodeData {
+  label: string
+  componentType: string
+  config?: Record<string, unknown>
+}
 
 interface Props {
   onApplyGraph: (spec: AiGraphSpec) => void
+  onPatchNodes: (patches: AiPatchSpec['patches']) => void
   connections: Connection[]
+  executionResult?: ExecutionResult | null
+  nodes?: Node[]
+  edges?: Edge[]
 }
 
 const PROVIDER_COLORS: Record<AiProvider, string> = {
   claude: '#bc8cff',
   openai: '#3fb950',
   gemini: '#58a6ff',
+  grok:   '#e6edf3',
 }
 
 function JsonBlock({ raw }: { raw: string }) {
   const [expanded, setExpanded] = React.useState(false)
 
-  // 요약: nodes N개, edges M개
+  // 요약: 포맷에 따라 다르게 표시
   let summary = 'JSON'
   try {
-    const parsed = JSON.parse(raw) as { nodes?: unknown[]; edges?: unknown[] }
-    const n = parsed.nodes?.length ?? 0
-    const e = parsed.edges?.length ?? 0
-    summary = `노드 ${n}개 · 엣지 ${e}개`
+    const parsed = JSON.parse(raw) as { action?: string; patches?: unknown[]; nodes?: unknown[]; edges?: unknown[] }
+    if (parsed.action === 'patch' && Array.isArray(parsed.patches)) {
+      summary = `수정 제안 ${parsed.patches.length}개 노드`
+    } else if (Array.isArray(parsed.nodes)) {
+      summary = `노드 ${parsed.nodes.length}개 · 엣지 ${parsed.edges?.length ?? 0}개`
+    }
   } catch { /* ignore */ }
 
   return (
@@ -73,7 +87,7 @@ function CodeBlock({ text }: { text: string }) {
     <>
       {before && <span className="whitespace-pre-wrap">{before}</span>}
       <JsonBlock raw={jsonMatch[1].trim()} />
-      {after && <span className="whitespace-pre-wrap">{after}</span>}
+      {after && <CodeBlock text={after} />}
     </>
   )
 }
@@ -108,13 +122,69 @@ RULES:
 - If column info is available, use the actual column names for mappings.`
 }
 
-export default function AiAgentPanel({ onApplyGraph, connections }: Props) {
+function buildExecutionContext(result: ExecutionResult, nodes: Node[]): string {
+  const nodeMap = new Map(nodes.map(n => [n.id, n]))
+  const lines: string[] = [
+    '=== ETL Execution Result ===',
+    `Overall Status: ${result.status}${result.durationMs ? ` (total ${result.durationMs}ms)` : ''}`,
+    '',
+    'Node-by-Node Results:',
+  ]
+
+  Object.entries(result.nodeResults).forEach(([nodeId, nr]) => {
+    const nd = nodeMap.get(nodeId)?.data as NodeData | undefined
+    const label = nd?.label ?? nodeId
+    const icon = nr.status === 'SUCCESS' ? '✓' : '✗'
+    const rows = nr.rowsProcessed !== undefined ? `, ${nr.rowsProcessed.toLocaleString()} rows` : ''
+    const dur = nr.durationMs ? `, ${nr.durationMs}ms` : ''
+    lines.push(`  ${icon} [${nr.nodeType}] "${label}": ${nr.status}${rows}${dur}`)
+    if (nr.errorMessage) lines.push(`      → Error: ${nr.errorMessage}`)
+  })
+
+  if (result.logs?.length) {
+    lines.push('', 'Execution Logs:')
+    result.logs.forEach(log => lines.push(`  ${log}`))
+  }
+
+  if (result.errorMessage) {
+    lines.push('', `Global Error: ${result.errorMessage}`)
+  }
+
+  return lines.join('\n')
+}
+
+function buildPipelineContext(nodes: Node[], edges: Edge[]): string {
+  if (nodes.length === 0) return ''
+  const lines = ['=== Current Pipeline (use exact nodeIds when patching) ===', 'Nodes:']
+  nodes.forEach(n => {
+    const d = n.data as NodeData
+    const cfg = { ...(d.config ?? {}) }
+    // columns 배열은 토큰 절약을 위해 개수만 표시
+    if (Array.isArray(cfg.columns)) {
+      ;(cfg as Record<string, unknown>).columns = `[${(cfg.columns as unknown[]).length} columns loaded]`
+    }
+    const cfgStr = Object.keys(cfg).length ? `  config: ${JSON.stringify(cfg)}` : ''
+    lines.push(`  nodeId: "${n.id}" | ${d.componentType} | label: "${d.label}"`)
+    if (cfgStr) lines.push(`  ${cfgStr}`)
+  })
+  lines.push('Edges:')
+  edges.forEach(e => {
+    const src = (nodes.find(n => n.id === e.source)?.data as NodeData)?.label ?? e.source
+    const tgt = (nodes.find(n => n.id === e.target)?.data as NodeData)?.label ?? e.target
+    lines.push(`  "${src}"[${e.source}] → "${tgt}"[${e.target}]`)
+  })
+  return lines.join('\n')
+}
+
+export default function AiAgentPanel({ onApplyGraph, onPatchNodes, connections, executionResult, nodes = [], edges = [] }: Props) {
   const [provider, setProvider] = useState<AiProvider>(DEFAULT_PROVIDER)
   const [model, setModel] = useState(AI_MODELS[DEFAULT_PROVIDER].models[0].id)
   const [messages, setMessages] = useState<AiMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [appliedPatches, setAppliedPatches] = useState<Set<number>>(new Set())
+  const [latestAssistantIdx, setLatestAssistantIdx] = useState<number | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // 커넥션 선택
@@ -167,25 +237,31 @@ export default function AiAgentPanel({ onApplyGraph, connections }: Props) {
   const handleProviderChange = (p: AiProvider) => {
     setProvider(p)
     setModel(AI_MODELS[p].models[0].id)
+    setError('')
   }
 
-  const handleSend = async () => {
-    const text = input.trim()
-    if (!text || loading) return
+  const sendMessage = async (text: string) => {
+    if (!text.trim() || loading) return
 
-    const newMessages: AiMessage[] = [...messages, { role: 'user', content: text }]
+    const newMessages: AiMessage[] = [...messages, { role: 'user', content: text.trim() }]
     setMessages(newMessages)
     setInput('')
     setLoading(true)
     setError('')
 
-    const systemContext = selectedConn
-      ? buildConnectionContext(selectedConn, tables, columnMap)
-      : undefined
+    const contextParts: string[] = []
+    if (selectedConn) contextParts.push(buildConnectionContext(selectedConn, tables, columnMap))
+    if (nodes.length > 0) contextParts.push(buildPipelineContext(nodes, edges))
+    if (executionResult) contextParts.push(buildExecutionContext(executionResult, nodes))
+    const systemContext = contextParts.length ? contextParts.join('\n\n---\n\n') : undefined
 
     try {
       const reply = await sendAiMessage(newMessages, { provider, model, apiKey, systemContext })
-      setMessages(prev => [...prev, { role: 'assistant', content: reply }])
+      setMessages(prev => {
+        const updated = [...prev, { role: 'assistant', content: reply }]
+        setLatestAssistantIdx(updated.length - 1)
+        return updated
+      })
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
     } catch (e) {
       setError(e instanceof Error ? e.message : '알 수 없는 오류')
@@ -193,6 +269,8 @@ export default function AiAgentPanel({ onApplyGraph, connections }: Props) {
       setLoading(false)
     }
   }
+
+  const handleSend = () => sendMessage(input)
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -234,6 +312,15 @@ export default function AiAgentPanel({ onApplyGraph, connections }: Props) {
               AI
             </div>
             <span className="text-xs font-semibold text-[#e6edf3]">AI Agent</span>
+            {executionResult && (
+              <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-medium ${
+                executionResult.status === 'SUCCESS'
+                  ? 'bg-[#0f2d1a] text-[#3fb950] border border-[#1a4731]'
+                  : 'bg-[#2d0f0f] text-[#f85149] border border-[#3d1a1a]'
+              }`}>
+                {executionResult.status === 'SUCCESS' ? '✓ 실행완료' : '✗ 실행실패'}
+              </span>
+            )}
           </div>
           <button onClick={clearChat}
             className="text-[10px] text-[#484f58] hover:text-[#8b949e] transition-colors">
@@ -254,7 +341,7 @@ export default function AiAgentPanel({ onApplyGraph, connections }: Props) {
           </select>
           <select
             value={model}
-            onChange={e => setModel(e.target.value)}
+            onChange={e => { setModel(e.target.value); setError('') }}
             className="flex-1 bg-[#161b27] border border-[#30363d] text-[#8b949e] rounded text-[10px] px-2 py-1
               focus:outline-none focus:border-[#58a6ff]">
             {AI_MODELS[provider].models.map(m => (
@@ -364,22 +451,31 @@ export default function AiAgentPanel({ onApplyGraph, connections }: Props) {
           </div>
         )}
 
-        {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+        {messages.map((msg, msgIdx) => (
+          <div
+            key={msgIdx}
+            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+          >
             {msg.role === 'assistant' && (
               <div className="w-5 h-5 rounded flex-shrink-0 flex items-center justify-center mr-1.5 mt-0.5 text-[9px] font-bold"
                 style={{ backgroundColor: `${PROVIDER_COLORS[provider]}22`, color: PROVIDER_COLORS[provider] }}>
                 AI
               </div>
             )}
-            <div className={`max-w-[85%] rounded-lg px-3 py-2 text-[11px] leading-relaxed
-              ${msg.role === 'user'
-                ? 'bg-[#1f3d6e] text-[#c9d1d9] rounded-tr-sm'
-                : 'bg-[#252d3d] text-[#c9d1d9] rounded-tl-sm'
-              }`}>
+            <div
+              className={`max-w-[85%] rounded-lg px-3 py-2 text-[11px] leading-relaxed
+                ${msg.role === 'user'
+                  ? 'bg-[#1f3d6e] text-[#c9d1d9] rounded-tr-sm'
+                  : 'bg-[#252d3d] text-[#c9d1d9] rounded-tl-sm'
+                }
+                ${msg.role === 'assistant' && msgIdx === latestAssistantIdx ? 'ai-msg-highlight' : ''}`}
+              onMouseEnter={() => { if (msgIdx === latestAssistantIdx) setLatestAssistantIdx(null) }}
+            >
               {msg.role === 'assistant' ? (
                 <div>
                   <CodeBlock text={msg.content} />
+
+                  {/* 새 파이프라인 생성 */}
                   {extractGraphSpec(msg.content) && (
                     <button
                       onClick={() => handleApply(msg.content)}
@@ -392,6 +488,104 @@ export default function AiAgentPanel({ onApplyGraph, connections }: Props) {
                       캔버스에 적용
                     </button>
                   )}
+
+                  {/* 기존 파이프라인 패치 */}
+                  {(() => {
+                    const patch = extractPatchSpec(msg.content)
+                    if (!patch) return null
+                    const isApplied = appliedPatches.has(msgIdx)
+                    return (
+                      <div className="mt-2 rounded-md border border-[#3d2060] bg-[#0d1117] overflow-hidden">
+                        <div className="px-2.5 py-1.5 bg-[#1f1035] border-b border-[#3d2060] flex items-center gap-1.5">
+                          <svg className="w-3 h-3 text-[#bc8cff]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                          <span className="text-[10px] font-semibold text-[#bc8cff]">
+                            수정 제안 — {patch.patches.length}개 노드
+                          </span>
+                        </div>
+                        <div className="divide-y divide-[#21262d]">
+                          {patch.patches.map((p, pi) => {
+                            const nd = nodes.find(n => n.id === p.nodeId)?.data as NodeData | undefined
+                            const label = nd?.label ?? p.nodeId
+                            const changedKeys = Object.keys(p.config ?? {})
+                            return (
+                              <div key={pi} className="px-2.5 py-2">
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                  <span className="text-[9px] px-1 py-0.5 rounded bg-[#1f1035] text-[#bc8cff] font-mono">
+                                    {nd ? (nd as NodeData).componentType : '?'}
+                                  </span>
+                                  <span className="text-[10px] font-medium text-[#e6edf3]">{label}</span>
+                                </div>
+                                {changedKeys.length > 0 && (
+                                  <p className="text-[9px] text-[#484f58] font-mono">
+                                    수정 키: {changedKeys.join(', ')}
+                                  </p>
+                                )}
+                                {p.reason && (
+                                  <p className="text-[9px] text-[#8b949e] mt-0.5 leading-relaxed">{p.reason}</p>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+
+                        {/* 적용 버튼 */}
+                        <div className="px-2.5 py-1.5 border-t border-[#3d2060]">
+                          {!isApplied ? (
+                            <button
+                              onClick={() => {
+                                onPatchNodes(patch.patches)
+                                setAppliedPatches(prev => new Set(prev).add(msgIdx))
+                              }}
+                              className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5
+                                rounded-md bg-[#6e40c9] hover:bg-[#8957e5] text-white text-[10px] font-medium
+                                transition-colors">
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                              파이프라인에 적용
+                            </button>
+                          ) : (
+                            <>
+                              {/* 적용 완료 버튼 */}
+                              <div className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5
+                                rounded-md bg-[#0f2d1a] border border-[#1a4731] text-[10px] font-medium text-[#3fb950]">
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                                적용 완료
+                              </div>
+
+                              {/* 적용 요약 */}
+                              <div className="mt-2 space-y-1">
+                                {patch.patches.map((p, pi) => {
+                                  const nd = nodes.find(n => n.id === p.nodeId)?.data as NodeData | undefined
+                                  const label = nd?.label ?? p.nodeId
+                                  const changedKeys = Object.keys(p.config ?? {})
+                                  return (
+                                    <div key={pi} className="flex items-start gap-1.5 px-1">
+                                      <span className="text-[#3fb950] text-[10px] flex-shrink-0 mt-px">✓</span>
+                                      <div className="min-w-0">
+                                        <span className="text-[10px] text-[#e6edf3] font-medium">{label}</span>
+                                        {changedKeys.length > 0 && (
+                                          <span className="text-[9px] text-[#484f58] ml-1">
+                                            — {changedKeys.join(', ')} 수정됨
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
               ) : (
                 <span className="whitespace-pre-wrap">{msg.content}</span>
@@ -420,6 +614,103 @@ export default function AiAgentPanel({ onApplyGraph, connections }: Props) {
         )}
 
         <div ref={bottomRef} />
+      </div>
+
+      {/* 빠른 액션 버튼 — 항상 표시, 상황에 따라 변경 */}
+      <div className="flex-shrink-0 px-3 py-2 border-t border-[#21262d]">
+        <p className="text-[9px] text-[#484f58] mb-1.5 uppercase tracking-wider">빠른 질문</p>
+        <div className="flex flex-wrap gap-1.5">
+          {!executionResult ? (
+            /* 실행 전: 파이프라인 설계 제안 */
+            <>
+              <button onClick={() => sendMessage('현재 파이프라인 구조를 검토하고 문제점이나 개선점을 알려줘.')}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
+                  bg-[#252d3d] border border-[#30363d] text-[#8b949e]
+                  hover:border-[#58a6ff] hover:text-[#58a6ff] transition-colors">
+                파이프라인 검토
+              </button>
+              <button onClick={() => sendMessage('이 파이프라인의 SQL을 최적화하는 방법을 제안해줘.')}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
+                  bg-[#252d3d] border border-[#30363d] text-[#8b949e]
+                  hover:border-[#58a6ff] hover:text-[#58a6ff] transition-colors">
+                SQL 최적화
+              </button>
+              <button onClick={() => sendMessage('현재 파이프라인에 데이터 검증 단계를 추가하려면 어떻게 해야 해?')}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
+                  bg-[#252d3d] border border-[#30363d] text-[#8b949e]
+                  hover:border-[#58a6ff] hover:text-[#58a6ff] transition-colors">
+                검증 단계 추가
+              </button>
+            </>
+          ) : executionResult.status === 'FAILED' ? (
+            /* 실행 실패 — 자동 수정 활성 */
+            <>
+              <button onClick={() => sendMessage('이 에러의 원인을 분석하고 해결 방법을 알려줘.')}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
+                  bg-[#2d0f0f] border border-[#3d1a1a] text-[#f85149]
+                  hover:bg-[#3d1515] hover:border-[#f85149] transition-colors">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+                에러 원인 분석
+              </button>
+              <button onClick={() => sendMessage('현재 파이프라인 구조를 검토하고 문제점을 설명해줘.')}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
+                  bg-[#252d3d] border border-[#30363d] text-[#8b949e]
+                  hover:border-[#8b949e] transition-colors">
+                파이프라인 검토
+              </button>
+              <button onClick={() => sendMessage('파이프라인 에러를 분석하고 현재 nodeId를 사용해서 patch JSON으로 즉시 수정해줘.')}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
+                  bg-[#1f1035] border border-[#3d2060] text-[#bc8cff]
+                  hover:bg-[#2a1550] hover:border-[#bc8cff] transition-colors">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                자동 수정
+              </button>
+            </>
+          ) : (
+            /* 실행 성공 — 자동 수정 비활성 */
+            <>
+              <button onClick={() => sendMessage('실행 결과를 분석하고 데이터 흐름을 요약해줘.')}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
+                  bg-[#0f2d1a] border border-[#1a4731] text-[#3fb950]
+                  hover:bg-[#1a4731] hover:border-[#3fb950] transition-colors">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                결과 분석
+              </button>
+              <button onClick={() => sendMessage('현재 파이프라인의 성능을 분석하고 최적화 방안을 제안해줘.')}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
+                  bg-[#0d1f35] border border-[#1a3050] text-[#58a6ff]
+                  hover:bg-[#1a3050] hover:border-[#58a6ff] transition-colors">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                최적화 제안
+              </button>
+              {/* 자동 수정 — SUCCESS 시 비활성 */}
+              <button
+                disabled
+                title="JOB이 실패한 경우에만 사용 가능"
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
+                  bg-[#161b27] border border-[#21262d] text-[#30363d] cursor-not-allowed">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                자동 수정
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Input */}

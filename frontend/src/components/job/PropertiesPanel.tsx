@@ -220,7 +220,7 @@ function JdbcInputConfig({ config, onChange }: {
       {/* Column preview */}
       {Array.isArray(config.columns) && (config.columns as ColumnInfo[]).length > 0 && (
         <div className="space-y-1">
-          <p className="text-[10px] text-[#484f58] font-medium">
+          <p className="text-xs text-[#484f58] font-medium">
             컬럼 {(config.columns as ColumnInfo[]).length}개 로드됨
           </p>
           <div className="max-h-32 overflow-y-auto rounded-md border border-[#21262d] bg-[#0d1117]">
@@ -237,12 +237,12 @@ function JdbcInputConfig({ config, onChange }: {
                     <span className="w-1 h-1 rounded-full bg-[#30363d]" />
                   </span>
                 )}
-                <span className="text-[10px] font-mono text-[#8b949e] flex-1 truncate">{col.columnName}</span>
-                <span className="text-[9px] text-[#484f58] flex-shrink-0">
+                <span className="text-xs font-mono text-[#8b949e] flex-1 truncate">{col.columnName}</span>
+                <span className="text-[11px] text-[#484f58] flex-shrink-0">
                   {col.dataType}{col.characterMaxLength ? `(${col.characterMaxLength})` : ''}
                 </span>
                 {!col.nullable && (
-                  <span className="text-[8px] text-[#f85149] flex-shrink-0">NN</span>
+                  <span className="text-[10px] text-[#f85149] flex-shrink-0">NN</span>
                 )}
               </div>
             ))}
@@ -330,7 +330,7 @@ function JdbcOutputConfig({ config, onChange }: {
       {/* Column preview */}
       {Array.isArray(config.columns) && (config.columns as ColumnInfo[]).length > 0 && (
         <div className="space-y-1">
-          <p className="text-[10px] text-[#484f58] font-medium">
+          <p className="text-xs text-[#484f58] font-medium">
             컬럼 {(config.columns as ColumnInfo[]).length}개 로드됨
           </p>
           <div className="max-h-32 overflow-y-auto rounded-md border border-[#21262d] bg-[#0d1117]">
@@ -347,12 +347,12 @@ function JdbcOutputConfig({ config, onChange }: {
                     <span className="w-1 h-1 rounded-full bg-[#30363d]" />
                   </span>
                 )}
-                <span className="text-[10px] font-mono text-[#8b949e] flex-1 truncate">{col.columnName}</span>
-                <span className="text-[9px] text-[#484f58] flex-shrink-0">
+                <span className="text-xs font-mono text-[#8b949e] flex-1 truncate">{col.columnName}</span>
+                <span className="text-[11px] text-[#484f58] flex-shrink-0">
                   {col.dataType}{col.characterMaxLength ? `(${col.characterMaxLength})` : ''}
                 </span>
                 {!col.nullable && (
-                  <span className="text-[8px] text-[#f85149] flex-shrink-0">NN</span>
+                  <span className="text-[10px] text-[#f85149] flex-shrink-0">NN</span>
                 )}
               </div>
             ))}
@@ -510,7 +510,7 @@ function GenericConfig({ config, type, onChange }: {
         }}
         rows={6}
         className="w-full bg-[#0d1117] border border-[#30363d] text-[#e6edf3] rounded-md px-3 py-2
-          text-xs font-mono focus:outline-none focus:border-[#58a6ff] resize-none"
+          text-xs font-mono focus:outline-none focus:border-[#58a6ff] resize-y"
       />
     </div>
   )
@@ -520,7 +520,7 @@ function GenericConfig({ config, type, onChange }: {
 export default function PropertiesPanel({ node, onUpdate, onDelete }: Props) {
   if (!node) {
     return (
-      <div className="w-[260px] flex-shrink-0 bg-[#161b27] border-l border-[#21262d]
+      <div className="w-[300px] flex-shrink-0 bg-[#161b27] border-l border-[#21262d]
         flex flex-col items-center justify-center">
         <div className="text-center px-6">
           <div className="w-10 h-10 rounded-lg bg-[#252d3d] flex items-center justify-center mx-auto mb-3">
@@ -561,7 +561,7 @@ export default function PropertiesPanel({ node, onUpdate, onDelete }: Props) {
   }
 
   return (
-    <div className="w-[260px] flex-shrink-0 bg-[#161b27] border-l border-[#21262d]
+    <div className="w-[300px] flex-shrink-0 bg-[#161b27] border-l border-[#21262d]
       flex flex-col overflow-hidden">
       {/* Header */}
       <div className="px-4 py-3 border-b border-[#21262d] flex-shrink-0">
