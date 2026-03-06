@@ -54,7 +54,7 @@ function irToFlow(ir: JobIR): { nodes: Node[]; edges: Edge[] } {
   return { nodes, edges }
 }
 
-function flowToIR(jobId: string, nodes: Node[], edges: Edge[]): JobIR {
+function flowToIR(jobId: string, nodes: Node[], edges: Edge[], context: Record<string, string> = {}): JobIR {
   return {
     id: jobId,
     version: '0.1',
@@ -79,8 +79,133 @@ function flowToIR(jobId: string, nodes: Node[], edges: Edge[]): JobIR {
       targetPort: 'in',
       linkType: 'ROW',
     })),
-    context: {},
+    context,
   }
+}
+
+// ── 컨텍스트 변수 패널 ──────────────────────────────────────────
+interface CtxVar { key: string; value: string; saved?: boolean }
+
+function ContextVarsPanel({
+  vars, onChange, onClose,
+}: {
+  vars: CtxVar[]
+  onChange: (v: CtxVar[]) => void
+  onClose: () => void
+}) {
+  const update = (i: number, field: 'key' | 'value', val: string) =>
+    onChange(vars.map((v, idx) => idx === i ? { ...v, [field]: val } : v))
+
+  const save = (i: number) => {
+    if (!vars[i].key.trim()) return
+    onChange(vars.map((v, idx) => idx === i ? { ...v, saved: true } : v))
+  }
+
+  const edit = (i: number) =>
+    onChange(vars.map((v, idx) => idx === i ? { ...v, saved: false } : v))
+
+  const remove = (i: number) => onChange(vars.filter((_, idx) => idx !== i))
+  const add = () => onChange([...vars, { key: '', value: '', saved: false }])
+
+  return (
+    <div className="w-[30rem] rounded-lg border border-[#30363d] bg-[#161b27] shadow-xl">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-[#21262d] bg-[#0d1117] rounded-t-lg">
+        <div className="flex items-center gap-1.5">
+          <svg className="w-3.5 h-3.5 text-[#f85149]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+          </svg>
+          <span className="text-xs font-semibold text-[#e6edf3]">컨텍스트 변수</span>
+          <span className="text-[9px] text-[#484f58]">context.변수명 으로 참조</span>
+        </div>
+        <button onClick={onClose} className="text-[#484f58] hover:text-[#8b949e] text-xs">✕</button>
+      </div>
+
+      <div className="px-2 py-2 space-y-1.5 max-h-72 overflow-y-auto">
+        {vars.length === 0 && (
+          <p className="text-[10px] text-[#484f58] text-center py-4">
+            변수가 없습니다. 아래 추가 버튼을 클릭하세요.
+          </p>
+        )}
+        {vars.map((v, i) => v.saved ? (
+          /* 저장된 행: 읽기 전용 표시 + 편집/삭제 버튼 */
+          <div key={i}
+            className="flex items-center gap-2 px-2 py-1.5 rounded bg-[#0d1117] border border-[#21262d] group">
+            <span className="font-mono text-[11px] text-[#f85149] truncate">context.</span>
+            <span className="font-mono text-[11px] text-[#e6edf3] truncate flex-1">{v.key}</span>
+            <span className="text-[#484f58] text-[10px] flex-shrink-0">=</span>
+            <span className="font-mono text-[11px] text-[#3fb950] truncate flex-1">{v.value || <span className="text-[#484f58] italic">empty</span>}</span>
+            <button
+              onClick={() => edit(i)}
+              title="수정"
+              className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded
+                text-[#484f58] hover:text-[#58a6ff] hover:bg-[#0d2040] text-[10px] transition-colors opacity-0 group-hover:opacity-100">
+              ✎
+            </button>
+            <button
+              onClick={() => remove(i)}
+              title="삭제"
+              className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded
+                text-[#484f58] hover:text-[#f85149] hover:bg-[#2d0f0f] text-xs transition-colors">
+              ✕
+            </button>
+          </div>
+        ) : (
+          /* 편집 행: 입력 필드 + 저장 버튼 */
+          <div key={i} className="flex items-center gap-2">
+            <input
+              value={v.key}
+              onChange={e => update(i, 'key', e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && save(i)}
+              placeholder="변수명 (batch_id)"
+              autoFocus
+              className="w-[44%] min-w-0 bg-[#0d1117] border border-[#30363d] text-[#e6edf3] rounded px-2 py-1.5
+                text-[11px] placeholder-[#484f58] focus:outline-none focus:border-[#f85149] font-mono"
+            />
+            <span className="text-[#484f58] text-[10px] flex-shrink-0">=</span>
+            <input
+              value={v.value}
+              onChange={e => update(i, 'value', e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && save(i)}
+              placeholder="값"
+              className="w-[44%] min-w-0 bg-[#0d1117] border border-[#30363d] text-[#e6edf3] rounded px-2 py-1.5
+                text-[11px] placeholder-[#484f58] focus:outline-none focus:border-[#f85149] font-mono"
+            />
+            {v.key.trim() || v.value.trim() ? (
+              <button
+                onClick={() => save(i)}
+                title="저장"
+                className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-xs font-bold
+                  text-[#3fb950] hover:bg-[#0f2d1a] transition-colors">
+                ✓
+              </button>
+            ) : (
+              <button
+                onClick={() => remove(i)}
+                title="취소"
+                className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-xs
+                  text-[#484f58] hover:text-[#f85149] hover:bg-[#2d0f0f] transition-colors">
+                ✕
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="px-2 pb-2 pt-2 border-t border-[#21262d]">
+        <button
+          onClick={add}
+          className="w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded
+            bg-[#2d0f0f] border border-[#6b1515] text-[#f85149] text-[10px] font-medium
+            hover:bg-[#3d1515] hover:border-[#f85149] transition-colors">
+          + 변수 추가
+        </button>
+        <p className="mt-1.5 text-[9px] text-[#484f58] text-center">
+          SQL/쿼리에서 <code className="text-[#bc8cff]">context.변수명</code> 으로 참조
+        </p>
+      </div>
+    </div>
+  )
 }
 
 export default function JobDesignerPage() {
@@ -109,6 +234,8 @@ export default function JobDesignerPage() {
   const schemaResizeStartY = useRef(0)
   const schemaResizeStartH = useRef(0)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  const [contextVars, setContextVars] = useState<CtxVar[]>([])
+  const [showContextPanel, setShowContextPanel] = useState(false)
 
   // 커넥션 목록이 없으면 직접 로드 (다른 페이지 거치지 않고 진입 시 대비)
   useEffect(() => {
@@ -128,6 +255,9 @@ export default function JobDesignerPage() {
           const { nodes: n, edges: e } = irToFlow(ir)
           setNodes(n)
           setEdges(e)
+        }
+        if (ir.context && Object.keys(ir.context).length > 0) {
+          setContextVars(Object.entries(ir.context).map(([key, value]) => ({ key, value, saved: true })))
         }
       } catch {}
     }).catch(() => navigate(`/projects/${projectId}`))
@@ -341,10 +471,13 @@ export default function JobDesignerPage() {
     })))
 
     try {
-      const ir = flowToIR(jobId, nodes, edges)
+      const ctxMap = Object.fromEntries(
+        contextVars.filter(v => v.key.trim()).map(v => [v.key.trim(), v.value])
+      )
+      const ir = flowToIR(jobId, nodes, edges, ctxMap)
       await jobsApi.update(projectId!, jobId, { irJson: JSON.stringify(ir) })
 
-      const result = await executionApi.run(jobId, {}, previewMode)
+      const result = await executionApi.run(jobId, ctxMap, previewMode)
       setExecutionResult(result)
       useAppStore.getState().setLastExecution(result)
 
@@ -498,6 +631,7 @@ export default function JobDesignerPage() {
         <Badge variant={jobStatus === 'PUBLISHED' ? 'success' : 'default'}>{jobStatus}</Badge>
 
         <div className="ml-auto flex items-center gap-2">
+
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#252d3d] border border-[#30363d]">
             <input type="checkbox" id="preview" checked={previewMode}
               onChange={e => setPreviewMode(e.target.checked)}
@@ -567,7 +701,24 @@ export default function JobDesignerPage() {
 
       {/* Body */}
       <div className="flex flex-1 min-h-0">
-        <ComponentPalette onDragStart={(type, label) => setDragType({ type, label })} />
+        {/* 좌측 사이드바 */}
+        <div className="relative w-[200px] flex-shrink-0 flex flex-col overflow-visible z-10">
+          <ComponentPalette
+            onDragStart={(type, label) => setDragType({ type, label })}
+            showContextPanel={showContextPanel}
+            onToggleContextPanel={() => setShowContextPanel(p => !p)}
+            varsCount={contextVars.filter(v => v.key.trim()).length}
+          />
+          {showContextPanel && (
+            <div className="absolute top-0 left-full ml-1 z-50">
+              <ContextVarsPanel
+                vars={contextVars}
+                onChange={setContextVars}
+                onClose={() => setShowContextPanel(false)}
+              />
+            </div>
+          )}
+        </div>
 
         <div className="flex flex-col flex-1 min-w-0">
           {/* Canvas */}

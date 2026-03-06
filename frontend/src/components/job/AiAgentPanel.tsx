@@ -184,6 +184,7 @@ export default function AiAgentPanel({ onApplyGraph, onPatchNodes, connections, 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [appliedPatches, setAppliedPatches] = useState<Set<number>>(new Set())
+  const [flashedPatches, setFlashedPatches] = useState<Set<number>>(new Set())
   const [latestAssistantIdx, setLatestAssistantIdx] = useState<number | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -550,14 +551,24 @@ export default function AiAgentPanel({ onApplyGraph, onPatchNodes, connections, 
                             </button>
                           ) : (
                             <>
-                              {/* 적용 완료 버튼 */}
-                              <div className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5
-                                rounded-md bg-[#0f2d1a] border border-[#1a4731] text-[10px] font-medium text-[#3fb950]">
-                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              {/* 적용 완료 — 재적용 가능 */}
+                              <button
+                                onClick={() => {
+                                  onPatchNodes(patch.patches)
+                                  setFlashedPatches(prev => new Set(prev).add(msgIdx))
+                                  setTimeout(() => setFlashedPatches(prev => {
+                                    const s = new Set(prev); s.delete(msgIdx); return s
+                                  }), 700)
+                                }}
+                                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5
+                                  rounded-md bg-[#0f2d1a] border border-[#1a4731] text-[10px] font-medium text-[#3fb950]
+                                  hover:bg-[#6e40c9] hover:border-[#6e40c9] hover:text-white transition-colors group">
+                                <svg className="w-3 h-3 group-hover:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                 </svg>
-                                적용 완료
-                              </div>
+                                <span className="group-hover:hidden">적용 완료</span>
+                                <span className="hidden group-hover:inline">재적용</span>
+                              </button>
 
                               {/* 적용 요약 */}
                               <div className="mt-2 space-y-1">
@@ -565,8 +576,11 @@ export default function AiAgentPanel({ onApplyGraph, onPatchNodes, connections, 
                                   const nd = nodes.find(n => n.id === p.nodeId)?.data as NodeData | undefined
                                   const label = nd?.label ?? p.nodeId
                                   const changedKeys = Object.keys(p.config ?? {})
+                                  const isFlashing = flashedPatches.has(msgIdx)
                                   return (
-                                    <div key={pi} className="flex items-start gap-1.5 px-1">
+                                    <div key={`${pi}-${isFlashing}`}
+                                      className={`flex items-start gap-1.5 px-1 rounded transition-colors
+                                        ${isFlashing ? 'bg-[#1a4731] animate-pulse' : ''}`}>
                                       <span className="text-[#3fb950] text-[10px] flex-shrink-0 mt-px">✓</span>
                                       <div className="min-w-0">
                                         <span className="text-[10px] text-[#e6edf3] font-medium">{label}</span>

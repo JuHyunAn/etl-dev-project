@@ -35,7 +35,14 @@ export default function MappingEditorModal({
   nodeId, nodeLabel, nodes, edges, currentMappings, onApply, onClose,
 }: Props) {
   const [sourceGroups, setSourceGroups] = useState<SourceGroup[]>([])
-  const [mappings, setMappings] = useState<MappingRow[]>(currentMappings)
+  // id/sourceNodeId 없는 AI 패치 JSON도 안전하게 초기화
+  const [mappings, setMappings] = useState<MappingRow[]>(() =>
+    currentMappings.map((m, i) => ({
+      ...m,
+      id: (m.id as string) || `map-loaded-${i}-${Date.now()}`,
+      sourceNodeId: (m.sourceNodeId as string) || '',
+    }))
+  )
   const [selectedSourceCol, setSelectedSourceCol] = useState<{ nodeId: string; col: string } | null>(null)
   const [loadingCount, setLoadingCount] = useState(0)
 
@@ -100,6 +107,21 @@ export default function MappingEditorModal({
         .finally(() => setLoadingCount(c => c - 1))
     })
   }, [nodeId, nodes, edges])
+
+  // sourceGroups 컬럼 로드 완료 후, sourceNodeId 없는 행(AI 패치 등)을 자동 매핑
+  useEffect(() => {
+    const allLoaded = sourceGroups.length > 0 && sourceGroups.every(g => !g.loading)
+    if (!allLoaded) return
+    setMappings(prev => prev.map(m => {
+      if (m.sourceNodeId || !m.sourceColumn) return m
+      for (const g of sourceGroups) {
+        if (g.columns.some(c => c.columnName === m.sourceColumn)) {
+          return { ...m, sourceNodeId: g.nodeId }
+        }
+      }
+      return m
+    }))
+  }, [sourceGroups])
 
   const allSourceCols = sourceGroups.flatMap(g =>
     g.columns.map(c => ({ nodeId: g.nodeId, nodeLabel: g.nodeLabel, col: c, color: g.color }))
@@ -377,7 +399,9 @@ export default function MappingEditorModal({
                         <select
                           value={`${m.sourceNodeId}::${m.sourceColumn}`}
                           onChange={e => {
-                            const [nid, col] = e.target.value.split('::')
+                            const parts = e.target.value.split('::')
+                            const nid = parts[0]
+                            const col = parts.slice(1).join('::')
                             updateMapping(m.id, 'sourceNodeId', nid)
                             updateMapping(m.id, 'sourceColumn', col)
                           }}
@@ -386,6 +410,10 @@ export default function MappingEditorModal({
                             focus:outline-none border-0 cursor-pointer"
                         >
                           <option value="::">-- 선택 --</option>
+                          {/* sourceNodeId 미해결 상태(AI 패치 직후)에서 컬럼명 표시 */}
+                          {!m.sourceNodeId && m.sourceColumn && (
+                            <option value={`::${m.sourceColumn}`}>{m.sourceColumn}</option>
+                          )}
                           {sourceGroups.map(g => (
                             <optgroup key={g.nodeId} label={g.nodeLabel}>
                               {g.columns.map(c => (
