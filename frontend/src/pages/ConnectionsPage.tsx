@@ -66,7 +66,7 @@ function ConnectionForm({
   return (
     <div className="p-6 space-y-4">
       {error && (
-        <div className="p-3 rounded-md bg-[#2d0f0f] border border-[#3d1515] text-sm text-[#f85149]">
+        <div className="p-3 rounded-lg text-sm" style={{ background: '#2a0f0f', border: '1px solid #3a1515', color: '#f87070' }}>
           {error}
         </div>
       )}
@@ -117,7 +117,7 @@ function ConnectionForm({
           <label htmlFor="ssl" className="text-sm text-[#8b949e]">Enable SSL</label>
         </div>
       </div>
-      <div className="flex justify-end gap-2 pt-2 border-t border-[#21262d]">
+      <div className="flex justify-end gap-2 pt-2" style={{ borderTop: '1px solid #1a2d47' }}>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button variant="primary" onClick={handleSubmit} disabled={saving}>
           {saving ? <Spinner size="sm" /> : null}
@@ -186,13 +186,12 @@ export default function ConnectionsPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <div className="max-w-5xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
+    <div className="h-full overflow-y-auto" style={{ background: '#f0f4f8' }}>
+      <div className="px-6 py-5" style={{ borderBottom: '1px solid #e2e8f0', background: '#ffffff' }}>
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold text-[#e6edf3]">Connections</h1>
-            <p className="text-sm text-[#8b949e] mt-1">Manage database connections</p>
+            <h1 className="text-xl font-bold" style={{ color: '#0f172a' }}>Connections</h1>
+            <p className="text-sm mt-0.5" style={{ color: '#64748b' }}>Manage database connections</p>
           </div>
           <Button variant="primary" onClick={() => { setEditing(null); setShowForm(true) }}>
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -201,6 +200,9 @@ export default function ConnectionsPage() {
             New Connection
           </Button>
         </div>
+      </div>
+      <div className="px-6 py-5">
+      <div className="max-w-5xl mx-auto space-y-6">
 
         {/* List */}
         {loading ? (
@@ -222,32 +224,33 @@ export default function ConnectionsPage() {
                 <Card key={conn.id} className="p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3 min-w-0">
-                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold
-                        ${conn.dbType === 'POSTGRESQL' ? 'bg-[#0d1f35] text-[#58a6ff]'
-                          : conn.dbType === 'ORACLE' ? 'bg-[#1f1035] text-[#bc8cff]'
-                          : 'bg-[#0f2d1a] text-[#3fb950]'}`}>
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-xs font-bold"
+                        style={{
+                          background: conn.dbType === 'POSTGRESQL' ? '#eff6ff' : conn.dbType === 'ORACLE' ? '#faf5ff' : '#f0fdf4',
+                          color: conn.dbType === 'POSTGRESQL' ? '#2563eb' : conn.dbType === 'ORACLE' ? '#7c3aed' : '#16a34a'
+                        }}>
                         {conn.dbType === 'POSTGRESQL' ? 'PG' : conn.dbType === 'ORACLE' ? 'ORA' : 'MY'}
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium text-[#e6edf3]">{conn.name}</span>
+                          <span className="text-sm font-medium" style={{ color: '#0f172a' }}>{conn.name}</span>
                           <Badge variant={dbTypeColor[conn.dbType] ?? 'default'}>{conn.dbType}</Badge>
                           {conn.sslEnabled && <Badge variant="success">SSL</Badge>}
                         </div>
-                        <p className="text-xs text-[#8b949e] mt-0.5">
+                        <p className="text-xs mt-0.5" style={{ color: '#64748b' }}>
                           {conn.username}@{conn.host}:{conn.port}/{conn.database}
                           {conn.schema ? `/${conn.schema}` : ''}
                         </p>
                         {conn.description && (
-                          <p className="text-xs text-[#484f58] mt-0.5 truncate">{conn.description}</p>
+                          <p className="text-xs mt-0.5 truncate" style={{ color: '#94a3b8' }}>{conn.description}</p>
                         )}
                         {testResult && (
-                          <div className={`flex items-center gap-1.5 mt-1.5 text-xs
-                            ${testResult.success ? 'text-[#3fb950]' : 'text-[#f85149]'}`}>
+                          <div className="flex items-center gap-1.5 mt-1.5 text-xs"
+                            style={{ color: testResult.success ? '#22c55e' : '#f87070' }}>
                             <span>{testResult.success ? '✓' : '✗'}</span>
                             <span>{testResult.message}</span>
                             {testResult.success && (
-                              <span className="text-[#484f58]">({testResult.durationMs}ms)</span>
+                              <span style={{ color: '#3d5573' }}>({testResult.durationMs}ms)</span>
                             )}
                           </div>
                         )}
@@ -287,6 +290,7 @@ export default function ConnectionsPage() {
             })}
           </div>
         )}
+      </div>
       </div>
 
       {/* Modal */}

@@ -40,7 +40,7 @@ const PROVIDER_COLORS: Record<AiProvider, string> = {
   claude: "#bc8cff",
   openai: "#3fb950",
   gemini: "#58a6ff",
-  grok: "#e6edf3",
+  grok: "#374151",
 };
 
 function JsonBlock({ raw }: { raw: string }) {
@@ -65,11 +65,14 @@ function JsonBlock({ raw }: { raw: string }) {
   }
 
   return (
-    <div className="my-2 rounded-md border border-[#30363d] bg-[#0d1117] overflow-hidden">
+    <div
+      className="my-2 rounded-md overflow-hidden"
+      style={{ border: "1px solid #e2e8f0", background: "#f8fafc" }}
+    >
       {/* 헤더 - 항상 표시 */}
       <button
         onClick={() => setExpanded((o) => !o)}
-        className="w-full flex items-center justify-between px-2.5 py-1.5 hover:bg-[#161b27] transition-colors group"
+        className="w-full flex items-center justify-between px-2.5 py-1.5 hover:bg-[#f0f4f8] transition-colors group"
       >
         <div className="flex items-center gap-1.5">
           <svg
@@ -86,10 +89,10 @@ function JsonBlock({ raw }: { raw: string }) {
             />
           </svg>
           <span className="text-[10px] font-mono text-[#58a6ff]">JSON</span>
-          <span className="text-[10px] text-[#484f58]">{summary}</span>
+          <span className="text-[10px] text-[#94a3b8]">{summary}</span>
         </div>
         <svg
-          className={`w-3 h-3 text-[#484f58] transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+          className={`w-3 h-3 text-[#94a3b8] transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -105,7 +108,7 @@ function JsonBlock({ raw }: { raw: string }) {
 
       {/* 전체 JSON - 펼쳤을 때만 표시 */}
       {expanded && (
-        <pre className="px-2.5 pb-2.5 text-[10px] font-mono text-[#79c0ff] overflow-x-auto max-h-60 border-t border-[#21262d]">
+        <pre className="px-2.5 pb-2.5 text-[10px] font-mono text-[#2563eb] overflow-x-auto max-h-60 border-t border-[#e2e8f0]">
           {raw}
         </pre>
       )}
@@ -418,9 +421,15 @@ export default function AiAgentPanel({
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#161b27] border-l border-[#21262d] overflow-hidden">
+    <div
+      className="w-full h-full flex flex-col overflow-hidden"
+      style={{ background: "#ffffff", borderLeft: "1px solid #e2e8f0" }}
+    >
       {/* Header */}
-      <div className="flex-shrink-0 px-3 py-2.5 border-b border-[#21262d] bg-[#0d1117]">
+      <div
+        className="flex-shrink-0 px-3 py-2.5"
+        style={{ borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}
+      >
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-1.5">
             <div
@@ -432,14 +441,14 @@ export default function AiAgentPanel({
             >
               AI
             </div>
-            <span className="text-xs font-semibold text-[#e6edf3]">
+            <span className="text-xs font-semibold text-[#0f172a]">
               AI Agent
             </span>
             {executionResult && (
               <span
                 className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-medium ${
                   executionResult.status === "SUCCESS"
-                    ? "bg-[#0f2d1a] text-[#3fb950] border border-[#1a4731]"
+                    ? "bg-[#f0fdf4] text-[#16a34a] border border-[#86efac]"
                     : "bg-[#2d0f0f] text-[#f85149] border border-[#3d1a1a]"
                 }`}
               >
@@ -451,7 +460,7 @@ export default function AiAgentPanel({
           </div>
           <button
             onClick={clearChat}
-            className="text-[10px] text-[#484f58] hover:text-[#8b949e] transition-colors"
+            className="text-[10px] text-[#94a3b8] hover:text-[#64748b] transition-colors"
           >
             대화 초기화
           </button>
@@ -462,7 +471,7 @@ export default function AiAgentPanel({
           <select
             value={provider}
             onChange={(e) => handleProviderChange(e.target.value as AiProvider)}
-            className="flex-1 bg-[#161b27] border border-[#30363d] text-[#8b949e] rounded text-[10px] px-2 py-1
+            className="flex-1 bg-[#f8fafc] border border-[#d1d5db] text-[#374151] rounded text-[10px] px-2 py-1
               focus:outline-none focus:border-[#58a6ff]"
           >
             {(Object.keys(AI_MODELS) as AiProvider[]).map((p) => (
@@ -477,7 +486,7 @@ export default function AiAgentPanel({
               setModel(e.target.value);
               setError("");
             }}
-            className="flex-1 bg-[#161b27] border border-[#30363d] text-[#8b949e] rounded text-[10px] px-2 py-1
+            className="flex-1 bg-[#f8fafc] border border-[#d1d5db] text-[#374151] rounded text-[10px] px-2 py-1
               focus:outline-none focus:border-[#58a6ff]"
           >
             {AI_MODELS[provider].models.map((m) => (
@@ -493,7 +502,7 @@ export default function AiAgentPanel({
           <select
             value={selectedConnId}
             onChange={(e) => setSelectedConnId(e.target.value)}
-            className="w-full bg-[#161b27] border border-[#30363d] text-[#8b949e] rounded text-[10px] px-2 py-1
+            className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#374151] rounded text-[10px] px-2 py-1
               focus:outline-none focus:border-[#58a6ff]"
           >
             <option value="">
@@ -509,7 +518,7 @@ export default function AiAgentPanel({
 
         {/* 스키마 로딩 상태 */}
         {schemaLoading && (
-          <div className="flex items-center gap-1.5 text-[9px] text-[#484f58] py-1">
+          <div className="flex items-center gap-1.5 text-[9px] text-[#94a3b8] py-1">
             <Spinner size="sm" />
             <span>테이블 및 컬럼 로딩 중...</span>
           </div>
@@ -533,7 +542,10 @@ export default function AiAgentPanel({
 
         {/* 테이블 목록 펼치기 */}
         {tableListOpen && tables.length > 0 && (
-          <div className="mt-1 max-h-32 overflow-y-auto rounded border border-[#30363d] bg-[#0d1117]">
+          <div
+            className="mt-1 max-h-32 overflow-y-auto rounded"
+            style={{ border: "1px solid #e2e8f0", background: "#f8fafc" }}
+          >
             {tables.map((t) => {
               const key = t.schemaName
                 ? `${t.schemaName}.${t.tableName}`
@@ -542,11 +554,11 @@ export default function AiAgentPanel({
               return (
                 <div
                   key={key}
-                  className="px-2 py-1 border-b border-[#21262d] last:border-0"
+                  className="px-2 py-1 border-b border-[#e2e8f0] last:border-0"
                 >
                   <p className="text-[10px] text-[#79c0ff] font-mono">{key}</p>
                   {cols.length > 0 && (
-                    <p className="text-[9px] text-[#484f58] truncate">
+                    <p className="text-[9px] text-[#94a3b8] truncate">
                       {cols.map((c) => c.columnName).join(", ")}
                     </p>
                   )}
@@ -594,10 +606,10 @@ export default function AiAgentPanel({
             >
               <img src="/ai.png" alt="AI" className="w-6 h-6 object-contain" />
             </div>
-            <p className="text-[14px] font-medium text-[#8b949e]">
+            <p className="text-[14px] font-medium text-[#64748b]">
               ETL 파이프라인을 설명해주세요
             </p>
-            <p className="text-[12px] text-[#484f58] mt-1">
+            <p className="text-[12px] text-[#94a3b8] mt-1">
               {selectedConn
                 ? `"${selectedConn.name}" 커넥션의 테이블을 활용합니다`
                 : "DB 커넥션을 선택하면 해당 테이블을 참조합니다."}
@@ -625,8 +637,8 @@ export default function AiAgentPanel({
               className={`max-w-[85%] rounded-lg px-3 py-2 text-[11px] leading-relaxed
                 ${
                   msg.role === "user"
-                    ? "bg-[#1f3d6e] text-[#c9d1d9] rounded-tr-sm"
-                    : "bg-[#252d3d] text-[#c9d1d9] rounded-tl-sm"
+                    ? "bg-[#2563eb] text-white rounded-tr-sm"
+                    : "bg-[#f1f5f9] text-[#374151] rounded-tl-sm"
                 }
                 ${msg.role === "assistant" && msgIdx === latestAssistantIdx ? "ai-msg-highlight" : ""}`}
               onMouseEnter={() => {
@@ -668,7 +680,13 @@ export default function AiAgentPanel({
                     if (!patch) return null;
                     const isApplied = appliedPatches.has(msgIdx);
                     return (
-                      <div className="mt-2 rounded-md border border-[#3d2060] bg-[#0d1117] overflow-hidden">
+                      <div
+                        className="mt-2 rounded-md overflow-hidden"
+                        style={{
+                          border: "1px solid #e2e8f0",
+                          background: "#f8fafc",
+                        }}
+                      >
                         <div className="px-2.5 py-1.5 bg-[#1f1035] border-b border-[#3d2060] flex items-center gap-1.5">
                           <svg
                             className="w-3 h-3 text-[#bc8cff]"
@@ -693,7 +711,7 @@ export default function AiAgentPanel({
                             수정 제안 — {patch.patches.length}개 노드
                           </span>
                         </div>
-                        <div className="divide-y divide-[#21262d]">
+                        <div className="divide-y divide-[#e2e8f0]">
                           {patch.patches.map((p, pi) => {
                             const nd = nodes.find((n) => n.id === p.nodeId)
                               ?.data as NodeData | undefined;
@@ -705,17 +723,17 @@ export default function AiAgentPanel({
                                   <span className="text-[9px] px-1 py-0.5 rounded bg-[#1f1035] text-[#bc8cff] font-mono">
                                     {nd ? (nd as NodeData).componentType : "?"}
                                   </span>
-                                  <span className="text-[10px] font-medium text-[#e6edf3]">
+                                  <span className="text-[10px] font-medium text-[#374151]">
                                     {label}
                                   </span>
                                 </div>
                                 {changedKeys.length > 0 && (
-                                  <p className="text-[9px] text-[#484f58] font-mono">
+                                  <p className="text-[9px] text-[#94a3b8] font-mono">
                                     수정 키: {changedKeys.join(", ")}
                                   </p>
                                 )}
                                 {p.reason && (
-                                  <p className="text-[9px] text-[#8b949e] mt-0.5 leading-relaxed">
+                                  <p className="text-[9px] text-[#64748b] mt-0.5 leading-relaxed">
                                     {p.reason}
                                   </p>
                                 )}
@@ -773,7 +791,7 @@ export default function AiAgentPanel({
                                   );
                                 }}
                                 className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5
-                                  rounded-md bg-[#0f2d1a] border border-[#1a4731] text-[10px] font-medium text-[#3fb950]
+                                  rounded-md bg-[#f0fdf4] border border-[#86efac] text-[10px] font-medium text-[#16a34a]
                                   hover:bg-[#6e40c9] hover:border-[#6e40c9] hover:text-white transition-colors group"
                               >
                                 <svg
@@ -818,11 +836,11 @@ export default function AiAgentPanel({
                                         ✓
                                       </span>
                                       <div className="min-w-0">
-                                        <span className="text-[10px] text-[#e6edf3] font-medium">
+                                        <span className="text-[10px] text-[#374151] font-medium">
                                           {label}
                                         </span>
                                         {changedKeys.length > 0 && (
-                                          <span className="text-[9px] text-[#484f58] ml-1">
+                                          <span className="text-[9px] text-[#94a3b8] ml-1">
                                             — {changedKeys.join(", ")} 수정됨
                                           </span>
                                         )}
@@ -856,9 +874,9 @@ export default function AiAgentPanel({
             >
               AI
             </div>
-            <div className="flex items-center gap-1.5 bg-[#252d3d] rounded-lg px-3 py-2">
+            <div className="flex items-center gap-1.5 bg-[#f1f5f9] rounded-lg px-3 py-2">
               <Spinner size="sm" />
-              <span className="text-[10px] text-[#484f58]">생성 중...</span>
+              <span className="text-[10px] text-[#94a3b8]">생성 중...</span>
             </div>
           </div>
         )}
@@ -873,8 +891,11 @@ export default function AiAgentPanel({
       </div>
 
       {/* 빠른 액션 버튼 — 항상 표시, 상황에 따라 변경 */}
-      <div className="flex-shrink-0 px-3 py-2 border-t border-[#21262d]">
-        <p className="text-[11px] text-[#484f58] mb-1.5 uppercase tracking-wider">
+      <div
+        className="flex-shrink-0 px-3 py-2"
+        style={{ borderTop: "1px solid #e2e8f0" }}
+      >
+        <p className="text-[11px] text-[#94a3b8] mb-1.5 uppercase tracking-wider">
           빠른 질문
         </p>
         <div className="flex flex-wrap gap-1.5">
@@ -888,8 +909,8 @@ export default function AiAgentPanel({
                   )
                 }
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
-                  bg-[#252d3d] border border-[#30363d] text-[#8b949e]
-                  hover:border-[#58a6ff] hover:text-[#58a6ff] transition-colors"
+                  bg-[#f8fafc] border border-[#d1d5db] text-[#64748b]
+                  hover:border-[#2563eb] hover:text-[#2563eb] transition-colors"
               >
                 파이프라인 검토
               </button>
@@ -900,8 +921,8 @@ export default function AiAgentPanel({
                   )
                 }
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
-                  bg-[#252d3d] border border-[#30363d] text-[#8b949e]
-                  hover:border-[#58a6ff] hover:text-[#58a6ff] transition-colors"
+                  bg-[#f8fafc] border border-[#d1d5db] text-[#64748b]
+                  hover:border-[#2563eb] hover:text-[#2563eb] transition-colors"
               >
                 SQL 최적화
               </button>
@@ -912,8 +933,8 @@ export default function AiAgentPanel({
                   )
                 }
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
-                  bg-[#252d3d] border border-[#30363d] text-[#8b949e]
-                  hover:border-[#58a6ff] hover:text-[#58a6ff] transition-colors"
+                  bg-[#f8fafc] border border-[#d1d5db] text-[#64748b]
+                  hover:border-[#2563eb] hover:text-[#2563eb] transition-colors"
               >
                 검증 단계 추가
               </button>
@@ -926,8 +947,8 @@ export default function AiAgentPanel({
                   sendMessage("이 에러의 원인을 분석하고 해결 방법을 알려줘.")
                 }
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
-                  bg-[#2d0f0f] border border-[#3d1a1a] text-[#f85149]
-                  hover:bg-[#3d1515] hover:border-[#f85149] transition-colors"
+                  bg-[#fef2f2] border border-[#fca5a5] text-[#dc2626]
+                  hover:bg-[#fee2e2] hover:border-[#dc2626] transition-colors"
               >
                 <svg
                   className="w-3 h-3"
@@ -951,8 +972,8 @@ export default function AiAgentPanel({
                   )
                 }
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
-                  bg-[#252d3d] border border-[#30363d] text-[#8b949e]
-                  hover:border-[#8b949e] transition-colors"
+                  bg-[#f8fafc] border border-[#d1d5db] text-[#64748b]
+                  hover:border-[#94a3b8] transition-colors"
               >
                 파이프라인 검토
               </button>
@@ -996,7 +1017,7 @@ export default function AiAgentPanel({
                   sendMessage("실행 결과를 분석하고 데이터 흐름을 요약해줘.")
                 }
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
-                  bg-[#0f2d1a] border border-[#1a4731] text-[#3fb950]
+                  bg-[#f0fdf4] border border-[#86efac] text-[#16a34a]
                   hover:bg-[#1a4731] hover:border-[#3fb950] transition-colors"
               >
                 <svg
@@ -1021,7 +1042,7 @@ export default function AiAgentPanel({
                   )
                 }
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
-                  bg-[#0d1f35] border border-[#1a3050] text-[#58a6ff]
+                  bg-[#eff6ff] border border-[#93c5fd] text-[#2563eb]
                   hover:bg-[#1a3050] hover:border-[#58a6ff] transition-colors"
               >
                 <svg
@@ -1044,7 +1065,7 @@ export default function AiAgentPanel({
                 disabled
                 title="JOB이 실패한 경우에만 사용 가능"
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium
-                  bg-[#161b27] border border-[#21262d] text-[#30363d] cursor-not-allowed"
+                  bg-[#f1f5f9] border border-[#e2e8f0] text-[#cbd5e1] cursor-not-allowed"
               >
                 <svg
                   className="w-3 h-3"
@@ -1073,7 +1094,10 @@ export default function AiAgentPanel({
       </div>
 
       {/* Input */}
-      <div className="flex-shrink-0 p-3 border-t border-[#21262d]">
+      <div
+        className="flex-shrink-0 p-3"
+        style={{ borderTop: "1px solid #e2e8f0" }}
+      >
         <div className="flex gap-2 items-end">
           <textarea
             value={input}
@@ -1081,9 +1105,20 @@ export default function AiAgentPanel({
             onKeyDown={handleKeyDown}
             placeholder="파이프라인을 설명해주세요... (Enter 전송, Shift+Enter 줄바꿈)"
             rows={3}
-            className="flex-1 bg-[#0d1117] border border-[#30363d] text-[#e6edf3] rounded-lg
-              px-3 py-2 text-[11px] placeholder-[#484f58] focus:outline-none focus:border-[#58a6ff]
-              resize-none leading-relaxed"
+            className="flex-1 rounded-lg px-3 py-2 text-[11px] focus:outline-none resize-none leading-relaxed"
+            style={{
+              background: "#f8fafc",
+              border: "1px solid #d1d5db",
+              color: "#0f172a",
+            }}
+            onFocus={(e) => {
+              e.target.style.borderColor = "#2563eb";
+              e.target.style.boxShadow = "0 0 0 2px rgba(37,99,235,0.15)";
+            }}
+            onBlur={(e) => {
+              e.target.style.borderColor = "#d1d5db";
+              e.target.style.boxShadow = "";
+            }}
           />
           <button
             onClick={handleSend}
@@ -1091,8 +1126,8 @@ export default function AiAgentPanel({
             className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors
               ${
                 input.trim() && !loading
-                  ? "bg-[#238636] hover:bg-[#2ea043] text-white"
-                  : "bg-[#21262d] text-[#484f58] cursor-not-allowed"
+                  ? "bg-[#2563eb] hover:bg-[#1d4ed8] text-white"
+                  : "bg-[#f1f5f9] text-[#cbd5e1] cursor-not-allowed"
               }`}
           >
             <svg
@@ -1110,7 +1145,7 @@ export default function AiAgentPanel({
             </svg>
           </button>
         </div>
-        <p className="text-[9px] text-[#30363d] mt-1.5 text-center">
+        <p className="text-[9px] text-[#94a3b8] mt-1.5 text-center">
           AI가 생성한 JSON 블록의 "캔버스에 적용" 버튼으로 노드를 추가합니다
         </p>
       </div>

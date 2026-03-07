@@ -161,20 +161,20 @@ export default function SchemaTree({ nodes }: Props) {
   }
 
   const dbTypeColor: Record<string, string> = {
-    POSTGRESQL: 'text-[#58a6ff]',
-    ORACLE:     'text-[#bc8cff]',
-    MARIADB:    'text-[#3fb950]',
+    POSTGRESQL: 'text-[#2563eb]',
+    ORACLE:     'text-[#7c3aed]',
+    MARIADB:    'text-[#16a34a]',
   }
   const dbTypeBg: Record<string, string> = {
-    POSTGRESQL: 'bg-[#0d1f35]',
-    ORACLE:     'bg-[#1f1035]',
-    MARIADB:    'bg-[#0f2d1a]',
+    POSTGRESQL: 'bg-[#eff6ff]',
+    ORACLE:     'bg-[#faf5ff]',
+    MARIADB:    'bg-[#f0fdf4]',
   }
 
   if (tree.length === 0) {
     return (
       <div className="px-3 py-4 text-center">
-        <p className="text-xs text-[#484f58]">캔버스에 DB 노드를 추가하면<br />스키마 정보가 표시됩니다</p>
+        <p className="text-xs text-[#94a3b8]">캔버스에 DB 노드를 추가하면<br />스키마 정보가 표시됩니다</p>
       </div>
     )
   }
@@ -186,23 +186,23 @@ export default function SchemaTree({ nodes }: Props) {
           {/* Connection Row */}
           <button
             onClick={() => toggleConnection(connNode.connection.id)}
-            className="w-full flex items-center gap-1.5 px-3 py-2 hover:bg-[#252d3d] transition-colors group">
-            <svg className={`w-2.5 h-2.5 flex-shrink-0 transition-transform text-[#484f58]
+            className="w-full flex items-center gap-1.5 px-3 py-2 hover:bg-[#f8fafc] transition-colors group">
+            <svg className={`w-2.5 h-2.5 flex-shrink-0 transition-transform text-[#94a3b8]
               ${connNode.expanded ? '' : '-rotate-90'}`}
               fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
             <div className={`w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center flex-shrink-0
-              ${dbTypeBg[connNode.connection.dbType] ?? 'bg-[#252d3d]'}
-              ${dbTypeColor[connNode.connection.dbType] ?? 'text-[#8b949e]'}`}>
+              ${dbTypeBg[connNode.connection.dbType] ?? 'bg-[#f1f5f9]'}
+              ${dbTypeColor[connNode.connection.dbType] ?? 'text-[#64748b]'}`}>
               {connNode.connection.dbType === 'POSTGRESQL' ? 'PG'
                 : connNode.connection.dbType === 'ORACLE' ? 'OR' : 'MY'}
             </div>
             <div className="flex-1 min-w-0 text-left">
-              <p className={`text-xs font-medium truncate ${dbTypeColor[connNode.connection.dbType] ?? 'text-[#8b949e]'}`}>
+              <p className={`text-xs font-medium truncate ${dbTypeColor[connNode.connection.dbType] ?? 'text-[#64748b]'}`}>
                 {connNode.connection.name}
               </p>
-              <p className="text-[10px] text-[#484f58] truncate">
+              <p className="text-[10px] text-[#94a3b8] truncate">
                 {connNode.connection.host}:{connNode.connection.port}
               </p>
             </div>
@@ -211,7 +211,7 @@ export default function SchemaTree({ nodes }: Props) {
           {connNode.expanded && (
             <div>
               {connNode.tables.length === 0 ? (
-                <div className="pl-8 pr-3 py-1.5 text-xs text-[#484f58]">커넥션만 사용 중</div>
+                <div className="pl-8 pr-3 py-1.5 text-xs text-[#94a3b8]">커넥션만 사용 중</div>
               ) : (
                 connNode.tables.map(tableNode => (
                   <div key={tableNode.tableName}>
@@ -219,20 +219,20 @@ export default function SchemaTree({ nodes }: Props) {
                     <button
                       onClick={() => toggleTable(connNode.connection.id, tableNode.tableName)}
                       className="w-full flex items-center gap-1.5 pl-6 pr-3 py-1.5
-                        hover:bg-[#1c2333] transition-colors group">
-                      <svg className={`w-2.5 h-2.5 flex-shrink-0 transition-transform text-[#484f58]
+                        hover:bg-[#f8fafc] transition-colors group">
+                      <svg className={`w-2.5 h-2.5 flex-shrink-0 transition-transform text-[#94a3b8]
                         ${tableNode.expanded ? '' : '-rotate-90'}`}
                         fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                       </svg>
-                      <svg className="w-3 h-3 flex-shrink-0 text-[#484f58]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-3 h-3 flex-shrink-0 text-[#94a3b8]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                           d="M3 10h18M3 14h18M10 4h4M10 20h4" />
                       </svg>
                       <div className="flex-1 min-w-0 text-left">
-                        <p className="text-xs text-[#c9d1d9] truncate font-mono">
+                        <p className="text-xs text-[#374151] truncate font-mono">
                           {tableNode.schemaName ? (
-                            <><span className="text-[#484f58]">{tableNode.schemaName}.</span>{tableNode.tableName}</>
+                            <><span className="text-[#94a3b8]">{tableNode.schemaName}.</span>{tableNode.tableName}</>
                           ) : tableNode.tableName}
                         </p>
                       </div>
@@ -245,22 +245,22 @@ export default function SchemaTree({ nodes }: Props) {
                         {tableNode.columnsLoading ? (
                           <div className="pl-12 py-1.5"><Spinner size="sm" /></div>
                         ) : tableNode.columns.length === 0 ? (
-                          <div className="pl-12 py-1 text-xs text-[#484f58]">컬럼 없음</div>
+                          <div className="pl-12 py-1 text-xs text-[#94a3b8]">컬럼 없음</div>
                         ) : (
                           tableNode.columns.map(col => (
                             <div key={col.columnName}
-                              className="flex items-center gap-1.5 pl-12 pr-3 py-0.5 group hover:bg-[#1c2333]">
+                              className="flex items-center gap-1.5 pl-12 pr-3 py-0.5 group hover:bg-[#f8fafc]">
                               {col.isPrimaryKey ? (
-                                <svg className="w-2.5 h-2.5 text-[#d29922] flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <svg className="w-2.5 h-2.5 text-[#ca8a04] flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                                   <path fillRule="evenodd" d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2 1 1 0 102 0 4 4 0 00-4-4z" clipRule="evenodd" />
                                 </svg>
                               ) : (
                                 <span className="w-2.5 h-2.5 flex-shrink-0 flex items-center justify-center">
-                                  <span className="w-1 h-1 rounded-full bg-[#30363d]" />
+                                  <span className="w-1 h-1 rounded-full bg-[#cbd5e1]" />
                                 </span>
                               )}
-                              <span className="text-[10px] font-mono text-[#8b949e] truncate">{col.columnName}</span>
-                              <span className="text-[9px] text-[#484f58] ml-auto flex-shrink-0">
+                              <span className="text-[10px] font-mono text-[#64748b] truncate">{col.columnName}</span>
+                              <span className="text-[9px] text-[#94a3b8] ml-auto flex-shrink-0">
                                 {col.dataType}{col.characterMaxLength ? `(${col.characterMaxLength})` : ''}
                               </span>
                             </div>

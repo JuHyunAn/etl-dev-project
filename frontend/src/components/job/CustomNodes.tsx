@@ -12,12 +12,12 @@ interface NodeData {
 }
 
 const GROUP_COLORS: Record<string, { bg: string; border: string; icon: string; text: string }> = {
-  INPUT:         { bg: '#0f2d1a', border: '#1a4731', icon: '#3fb950', text: '#3fb950' },
-  TRANSFORM:     { bg: '#0d1f35', border: '#1a3050', icon: '#58a6ff', text: '#58a6ff' },
-  OUTPUT:        { bg: '#2d1a07', border: '#3d2c0a', icon: '#f0883e', text: '#f0883e' },
-  ORCHESTRATION: { bg: '#1f1035', border: '#2e1f52', icon: '#bc8cff', text: '#bc8cff' },
-  LOGS:          { bg: '#2d2007', border: '#3d2c0a', icon: '#d29922', text: '#d29922' },
-  AETL:          { bg: '#0d1f35', border: '#1a3050', icon: '#58a6ff', text: '#58a6ff' },
+  INPUT:         { bg: '#f0fdf4', border: '#86efac', icon: '#16a34a', text: '#15803d' },
+  TRANSFORM:     { bg: '#eff6ff', border: '#93c5fd', icon: '#2563eb', text: '#1d4ed8' },
+  OUTPUT:        { bg: '#fff7ed', border: '#fdba74', icon: '#ea580c', text: '#c2410c' },
+  ORCHESTRATION: { bg: '#faf5ff', border: '#d8b4fe', icon: '#7c3aed', text: '#6d28d9' },
+  LOGS:          { bg: '#fefce8', border: '#fde047', icon: '#ca8a04', text: '#a16207' },
+  AETL:          { bg: '#eff6ff', border: '#93c5fd', icon: '#2563eb', text: '#1d4ed8' },
 }
 
 function getGroupColors(type: ComponentType) {
@@ -31,9 +31,9 @@ function getGroupColors(type: ComponentType) {
 
 const STATUS_COLORS = {
   idle:    '',
-  running: 'border-[#58a6ff] shadow-[0_0_0_2px_rgba(88,166,255,0.3)]',
-  success: 'border-[#3fb950]',
-  failed:  'border-[#f85149]',
+  running: 'border-[#2563eb] shadow-[0_0_0_2px_rgba(37,99,235,0.25)]',
+  success: 'border-[#16a34a]',
+  failed:  'border-[#dc2626]',
 }
 
 function ComponentIcon({ type }: { type: ComponentType }) {
@@ -114,24 +114,24 @@ const ETLNode = memo(({ id, data, selected }: NodeProps) => {
             onClick={handleDuplicate}
             title="복제"
             className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold
-              bg-[#161b27] border border-[#30363d] text-[#8b949e]
-              hover:bg-[#0d1f35] hover:border-[#58a6ff] hover:text-[#58a6ff] transition-colors shadow-md"
+              bg-white border border-[#e2e8f0] text-[#64748b]
+              hover:bg-[#eff6ff] hover:border-[#2563eb] hover:text-[#2563eb] transition-colors shadow-sm"
           >+</button>
           <button
             onClick={handleDelete}
             title="삭제"
             className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold
-              bg-[#161b27] border border-[#30363d] text-[#8b949e]
-              hover:bg-[#2d0f0f] hover:border-[#f85149] hover:text-[#f85149] transition-colors shadow-md"
+              bg-white border border-[#e2e8f0] text-[#64748b]
+              hover:bg-[#fef2f2] hover:border-[#dc2626] hover:text-[#dc2626] transition-colors shadow-sm"
           >−</button>
         </div>
       </NodeToolbar>
 
     <div
       className={`relative min-w-[140px] rounded-lg border-2 transition-all select-none
-        ${selected ? 'border-[#58a6ff] shadow-[0_0_0_3px_rgba(88,166,255,0.2)]' : `border-[${colors.border}]`}
+        ${selected ? 'shadow-[0_0_0_3px_rgba(37,99,235,0.2)]' : 'shadow-sm'}
         ${statusClass}`}
-      style={{ backgroundColor: colors.bg, borderColor: selected ? '#58a6ff' : colors.border }}
+      style={{ backgroundColor: colors.bg, borderColor: selected ? '#2563eb' : colors.border }}
     >
       {/* Input Handle */}
       {!isInput && (
@@ -153,7 +153,7 @@ const ETLNode = memo(({ id, data, selected }: NodeProps) => {
             <p className="text-xs font-semibold truncate" style={{ color: colors.text }}>
               {nodeData.label}
             </p>
-            <p className="text-[10px] text-[#484f58] truncate">
+            <p className="text-[10px] truncate" style={{ color: '#94a3b8' }}>
               {nodeData.componentType.replace('T_', '').replace(/_/g, ' ')}
             </p>
           </div>
@@ -162,7 +162,8 @@ const ETLNode = memo(({ id, data, selected }: NodeProps) => {
         {/* Write Mode badge for OUTPUT nodes */}
         {nodeData.componentType === 'T_JDBC_OUTPUT' && nodeData.config?.writeMode && (
           <div className="mt-1 flex items-center">
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#2d1a07] border border-[#3d2c0a] text-[#f0883e] font-mono">
+            <span className="text-[9px] px-1.5 py-0.5 rounded font-mono"
+              style={{ background: '#fff7ed', border: '1px solid #fdba74', color: '#ea580c' }}>
               {nodeData.config.writeMode as string}
             </span>
           </div>

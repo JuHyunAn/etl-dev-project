@@ -67,7 +67,7 @@ function irToFlow(ir: JobIR): { nodes: Node[]; edges: Edge[] } {
     source: e.source,
     target: e.target,
     animated: false,
-    style: { stroke: "#58a6ff", strokeWidth: 2 },
+    style: { stroke: "#2563eb", strokeWidth: 2 },
   }));
   return { nodes, edges };
 }
@@ -137,11 +137,17 @@ function ContextVarsPanel({
   const add = () => onChange([...vars, { key: "", value: "", saved: false }]);
 
   return (
-    <div className="w-[30rem] rounded-lg border border-[#30363d] bg-[#161b27] shadow-xl">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[#21262d] bg-[#0d1117] rounded-t-lg">
+    <div
+      className="w-[30rem] rounded-lg shadow-xl"
+      style={{ border: "1px solid #e2e8f0", background: "#ffffff" }}
+    >
+      <div
+        className="flex items-center justify-between px-3 py-2 rounded-t-lg"
+        style={{ borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}
+      >
         <div className="flex items-center gap-1.5">
           <svg
-            className="w-3.5 h-3.5 text-[#f85149]"
+            className="w-3.5 h-3.5 text-[#ef4444]"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -153,16 +159,16 @@ function ContextVarsPanel({
               d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
             />
           </svg>
-          <span className="text-xs font-semibold text-[#e6edf3]">
+          <span className="text-xs font-semibold text-[#0f172a]">
             컨텍스트 변수
           </span>
-          <span className="text-[9px] text-[#484f58]">
+          <span className="text-[9px] text-[#94a3b8]">
             context.변수명 으로 참조
           </span>
         </div>
         <button
           onClick={onClose}
-          className="text-[#484f58] hover:text-[#8b949e] text-xs"
+          className="text-[#94a3b8] hover:text-[#64748b] text-xs"
         >
           ✕
         </button>
@@ -170,7 +176,7 @@ function ContextVarsPanel({
 
       <div className="px-2 py-2 space-y-1.5 max-h-72 overflow-y-auto">
         {vars.length === 0 && (
-          <p className="text-[10px] text-[#484f58] text-center py-4">
+          <p className="text-[10px] text-[#94a3b8] text-center py-4">
             변수가 없습니다. 아래 추가 버튼을 클릭하세요.
           </p>
         )}
@@ -179,27 +185,28 @@ function ContextVarsPanel({
             /* 저장된 행: 읽기 전용 표시 + 편집/삭제 버튼 */
             <div
               key={i}
-              className="flex items-center gap-2 px-2 py-1.5 rounded bg-[#0d1117] border border-[#21262d] group"
+              className="flex items-center gap-2 px-2 py-1.5 rounded group"
+              style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}
             >
-              <span className="font-mono text-[11px] text-[#f85149] truncate">
+              <span className="font-mono text-[11px] text-[#ef4444] truncate">
                 context.
               </span>
-              <span className="font-mono text-[11px] text-[#e6edf3] truncate flex-1">
+              <span className="font-mono text-[11px] text-[#0f172a] truncate flex-1">
                 {v.key}
               </span>
-              <span className="text-[#484f58] text-[10px] flex-shrink-0">
+              <span className="text-[#94a3b8] text-[10px] flex-shrink-0">
                 =
               </span>
-              <span className="font-mono text-[11px] text-[#3fb950] truncate flex-1">
+              <span className="font-mono text-[11px] text-[#16a34a] truncate flex-1">
                 {v.value || (
-                  <span className="text-[#484f58] italic">empty</span>
+                  <span className="text-[#94a3b8] italic">empty</span>
                 )}
               </span>
               <button
                 onClick={() => edit(i)}
                 title="수정"
                 className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded
-                text-[#484f58] hover:text-[#58a6ff] hover:bg-[#0d2040] text-[10px] transition-colors opacity-0 group-hover:opacity-100"
+                text-[#94a3b8] hover:text-[#2563eb] hover:bg-[#eff6ff] text-[10px] transition-colors opacity-0 group-hover:opacity-100"
               >
                 ✎
               </button>
@@ -207,7 +214,7 @@ function ContextVarsPanel({
                 onClick={() => remove(i)}
                 title="삭제"
                 className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded
-                text-[#484f58] hover:text-[#f85149] hover:bg-[#2d0f0f] text-xs transition-colors"
+                text-[#94a3b8] hover:text-[#dc2626] hover:bg-[#fef2f2] text-xs transition-colors"
               >
                 ✕
               </button>
@@ -221,10 +228,10 @@ function ContextVarsPanel({
                 onKeyDown={(e) => e.key === "Enter" && save(i)}
                 placeholder="변수명 (batch_id)"
                 autoFocus
-                className="w-[44%] min-w-0 bg-[#0d1117] border border-[#30363d] text-[#e6edf3] rounded px-2 py-1.5
-                text-[11px] placeholder-[#484f58] focus:outline-none focus:border-[#f85149] font-mono"
+                className="w-[44%] min-w-0 bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1.5
+                text-[11px] placeholder-[#94a3b8] focus:outline-none focus:border-[#ef4444] font-mono"
               />
-              <span className="text-[#484f58] text-[10px] flex-shrink-0">
+              <span className="text-[#94a3b8] text-[10px] flex-shrink-0">
                 =
               </span>
               <input
@@ -232,15 +239,15 @@ function ContextVarsPanel({
                 onChange={(e) => update(i, "value", e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && save(i)}
                 placeholder="값"
-                className="w-[44%] min-w-0 bg-[#0d1117] border border-[#30363d] text-[#e6edf3] rounded px-2 py-1.5
-                text-[11px] placeholder-[#484f58] focus:outline-none focus:border-[#f85149] font-mono"
+                className="w-[44%] min-w-0 bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1.5
+                text-[11px] placeholder-[#94a3b8] focus:outline-none focus:border-[#ef4444] font-mono"
               />
               {v.key.trim() || v.value.trim() ? (
                 <button
                   onClick={() => save(i)}
                   title="저장"
                   className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-xs font-bold
-                  text-[#3fb950] hover:bg-[#0f2d1a] transition-colors"
+                  text-[#16a34a] hover:bg-[#f0fdf4] transition-colors"
                 >
                   ✓
                 </button>
@@ -249,7 +256,7 @@ function ContextVarsPanel({
                   onClick={() => remove(i)}
                   title="취소"
                   className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-xs
-                  text-[#484f58] hover:text-[#f85149] hover:bg-[#2d0f0f] transition-colors"
+                  text-[#94a3b8] hover:text-[#dc2626] hover:bg-[#fef2f2] transition-colors"
                 >
                   ✕
                 </button>
@@ -259,17 +266,32 @@ function ContextVarsPanel({
         )}
       </div>
 
-      <div className="px-2 pb-2 pt-2 border-t border-[#21262d]">
+      <div
+        className="px-2 pb-2 pt-2"
+        style={{ borderTop: "1px solid #e2e8f0" }}
+      >
         <button
           onClick={add}
           className="w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded
-            bg-[#2d0f0f] border border-[#6b1515] text-[#f85149] text-[10px] font-medium
-            hover:bg-[#3d1515] hover:border-[#f85149] transition-colors"
+            text-[10px] font-medium transition-colors"
+          style={{
+            background: "#fef2f2",
+            border: "1px solid #fca5a5",
+            color: "#dc2626",
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "#fee2e2";
+            (e.currentTarget as HTMLElement).style.borderColor = "#dc2626";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "#fef2f2";
+            (e.currentTarget as HTMLElement).style.borderColor = "#fca5a5";
+          }}
         >
           + 변수 추가
         </button>
-        <p className="mt-1.5 text-[9px] text-[#484f58] text-center">
-          SQL/쿼리에서 <code className="text-[#bc8cff]">context.변수명</code>{" "}
+        <p className="mt-1.5 text-[9px] text-[#94a3b8] text-center">
+          SQL/쿼리에서 <code className="text-[#7c3aed]">context.변수명</code>{" "}
           으로 참조
         </p>
       </div>
@@ -377,7 +399,7 @@ export default function JobDesignerPage() {
           {
             ...params,
             animated: false,
-            style: { stroke: "#58a6ff", strokeWidth: 2 },
+            style: { stroke: "#2563eb", strokeWidth: 2 },
           },
           eds,
         ),
@@ -478,7 +500,7 @@ export default function JobDesignerPage() {
           source: newNodes[e.source]?.id ?? "",
           target: newNodes[e.target]?.id ?? "",
           animated: false,
-          style: { stroke: "#58a6ff", strokeWidth: 2 },
+          style: { stroke: "#2563eb", strokeWidth: 2 },
         }))
         .filter((e) => e.source && e.target);
 
@@ -696,7 +718,7 @@ export default function JobDesignerPage() {
         ...e,
         label: undefined,
         animated: true,
-        style: { stroke: "#58a6ff", strokeWidth: 2 },
+        style: { stroke: "#2563eb", strokeWidth: 2 },
       })),
     );
 
@@ -759,7 +781,7 @@ export default function JobDesignerPage() {
                 fontSize: 10,
                 fontFamily: "monospace",
               },
-              labelBgStyle: { fill: "#0d1117", fillOpacity: 0.9 },
+              labelBgStyle: { fill: "#ffffff", fillOpacity: 0.95 },
               labelBgPadding: [4, 2] as [number, number],
               labelBgBorderRadius: 3,
             };
@@ -907,12 +929,15 @@ export default function JobDesignerPage() {
     );
 
   return (
-    <div className="flex flex-col h-screen bg-[#0d1117]">
+    <div className="flex flex-col h-screen" style={{ background: "#f0f4f8" }}>
       {/* Toolbar */}
-      <div className="flex items-center gap-3 px-4 py-2.5 bg-[#161b27] border-b border-[#21262d] flex-shrink-0">
+      <div
+        className="flex items-center gap-3 px-4 py-2.5 flex-shrink-0"
+        style={{ background: "#232b37", borderBottom: "1px solid #232b37" }}
+      >
         <button
           onClick={() => navigate(`/projects/${projectId}`)}
-          className="text-[#8b949e] hover:text-[#e6edf3] transition-colors p-1"
+          className="text-[#94a3b8] hover:text-[#374151] transition-colors p-1"
         >
           <svg
             className="w-4 h-4"
@@ -928,7 +953,7 @@ export default function JobDesignerPage() {
             />
           </svg>
         </button>
-        <div className="h-4 w-px bg-[#30363d]" />
+        <div className="h-4 w-px bg-[#e2e8f0]" />
         <input
           value={jobName}
           onChange={(e) => setJobName(e.target.value)}
@@ -936,8 +961,9 @@ export default function JobDesignerPage() {
             if (projectId && jobId)
               jobsApi.update(projectId, jobId, { name: jobName });
           }}
-          className="bg-transparent text-sm font-semibold text-[#e6edf3] focus:outline-none
-            border-b border-transparent focus:border-[#58a6ff] min-w-0 max-w-[200px]"
+          className="bg-transparent text-sm font-semibold focus:outline-none
+            border-b border-transparent focus:border-[#2563eb] min-w-0 max-w-[200px]"
+          style={{ color: "#ffffff" }}
         />
         <Badge variant={jobStatus === "PUBLISHED" ? "success" : "default"}>
           {jobStatus}
@@ -949,8 +975,8 @@ export default function JobDesignerPage() {
             className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors select-none
               ${
                 previewMode
-                  ? "bg-[#1a4731] border-[#2ea043] text-[#3fb950]"
-                  : "bg-[#252d3d] border-[#30363d] text-[#8b949e] hover:text-[#e6edf3]"
+                  ? "bg-[#f0fdf4] border-[#16a34a] text-[#16a34a]"
+                  : "bg-[#f8fafc] border-[#d1d5db] text-[#6b7280] hover:text-[#374151]"
               }`}
           >
             Preview Mode {previewMode ? "(활성)" : "(비활성)"}
@@ -1021,7 +1047,7 @@ export default function JobDesignerPage() {
             Summary
           </Button>
 
-          <div className="h-4 w-px bg-[#30363d]" />
+          <div className="h-4 w-px bg-[#e2e8f0]" />
 
           <Button
             variant="secondary"
@@ -1131,6 +1157,12 @@ export default function JobDesignerPage() {
             className="flex-1 min-h-0 relative"
             onDragOver={onDragOver}
             onDrop={onDrop}
+            style={{
+              backgroundImage:
+                "radial-gradient(circle, #dde1e7 1px, transparent 1px)",
+              backgroundSize: "12px 12px",
+              backgroundColor: "#f8fafc",
+            }}
           >
             <ReactFlow
               nodes={nodes}
@@ -1145,23 +1177,17 @@ export default function JobDesignerPage() {
               nodeTypes={nodeTypes}
               fitView
               deleteKeyCode={["Delete", "Backspace"]}
-              style={{ background: "#0d1117" }}
+              style={{ background: "transparent" }}
               defaultEdgeOptions={{
-                style: { stroke: "#58a6ff", strokeWidth: 2 },
+                style: { stroke: "#2563eb", strokeWidth: 2 },
               }}
             >
-              <Background
-                variant={BackgroundVariant.Dots}
-                gap={20}
-                size={1}
-                color="#21262d"
-              />
               <Controls />
               <MiniMap
                 nodeColor={(n) => {
                   const t = (n.data as EtlNodeData).componentType ?? "";
-                  if (t.endsWith("_INPUT")) return "#3fb950";
-                  if (t.endsWith("_OUTPUT")) return "#f0883e";
+                  if (t.endsWith("_INPUT")) return "#16a34a";
+                  if (t.endsWith("_OUTPUT")) return "#ea580c";
                   if (
                     [
                       "T_PRE_JOB",
@@ -1170,10 +1196,10 @@ export default function JobDesignerPage() {
                       "T_SLEEP",
                     ].includes(t)
                   )
-                    return "#bc8cff";
-                  return "#58a6ff";
+                    return "#7c3aed";
+                  return "#2563eb";
                 }}
-                maskColor="rgba(13,17,23,0.8)"
+                maskColor="rgba(240,244,248,0.8)"
               />
             </ReactFlow>
 
@@ -1193,37 +1219,43 @@ export default function JobDesignerPage() {
                   <div className="relative flex flex-col items-center px-8 py-3">
                     {/* 정적 glow 테두리 */}
                     <div
-                      className="absolute inset-0 rounded-lg border border-[#484f58]/50"
+                      className="absolute inset-0 rounded-lg border border-[#94a3b8]/50"
                       style={{
                         animation: "previewGlow 2.5s ease-in-out infinite",
                       }}
                     />
                     {/* 물결 ripple 링 3개 (1초 간격) */}
                     <div
-                      className="absolute inset-0 rounded-lg border border-[#484f58]/50"
+                      className="absolute inset-0 rounded-lg border border-[#94a3b8]/50"
                       style={{
                         animation: "previewRipple 3s ease-out infinite",
                         animationDelay: "0s",
                       }}
                     />
                     <div
-                      className="absolute inset-0 rounded-lg border border-[#484f58]/50"
+                      className="absolute inset-0 rounded-lg border border-[#94a3b8]/50"
                       style={{
                         animation: "previewRipple 3s ease-out infinite",
                         animationDelay: "1s",
                       }}
                     />
                     <div
-                      className="absolute inset-0 rounded-lg border border-[#484f58]/50"
+                      className="absolute inset-0 rounded-lg border border-[#94a3b8]/50"
                       style={{
                         animation: "previewRipple 3s ease-out infinite",
                         animationDelay: "2s",
                       }}
                     />
-                    <span className="relative z-10 text-[20px] font-bold text-[#484f58] tracking-widest select-none">
+                    <span
+                      className="relative z-10 text-[20px] font-bold tracking-widest select-none"
+                      style={{ color: "#94a3b8" }}
+                    >
                       — Preview Mode —
                     </span>
-                    <p className="relative z-10 text-[14px] font-bold text-[#484f58] text-center mt-1 select-none">
+                    <p
+                      className="relative z-10 text-[14px] font-bold text-center mt-1 select-none"
+                      style={{ color: "#94a3b8" }}
+                    >
                       해당 모드에서는 실행결과가 DB에 반영되지 않습니다.
                     </p>
                   </div>
@@ -1235,11 +1267,15 @@ export default function JobDesignerPage() {
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="text-center">
                   <div
-                    className="w-16 h-16 rounded-2xl bg-[#161b27] border border-[#30363d]
-                    flex items-center justify-center mx-auto mb-4"
+                    className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
+                    style={{
+                      background: "#f1f5f9",
+                      border: "1px solid #e2e8f0",
+                    }}
                   >
                     <svg
-                      className="w-8 h-8 text-[#484f58]"
+                      className="w-8 h-8"
+                      style={{ color: "#94a3b8" }}
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -1252,10 +1288,13 @@ export default function JobDesignerPage() {
                       />
                     </svg>
                   </div>
-                  <p className="text-sm font-medium text-[#484f58]">
+                  <p
+                    className="text-sm font-medium"
+                    style={{ color: "#64748b" }}
+                  >
                     Drag components from the palette
                   </p>
-                  <p className="text-xs text-[#30363d] mt-1">
+                  <p className="text-xs mt-1" style={{ color: "#94a3b8" }}>
                     Connect nodes to build your ETL pipeline
                   </p>
                 </div>
@@ -1266,7 +1305,7 @@ export default function JobDesignerPage() {
           {/* Bottom Panel */}
           {bottomPanel && (
             <div
-              className="flex-shrink-0 bg-[#161b27] border-t border-[#21262d] flex flex-col"
+              className="flex-shrink-0 bg-[#232b37] border-t border-[#21262d] flex flex-col"
               style={{ height: bottomPanelHeight }}
             >
               {/* 상단 리사이즈 핸들 */}
@@ -1398,7 +1437,7 @@ export default function JobDesignerPage() {
                         ].map((s) => (
                           <div
                             key={s.label}
-                            className="px-3 py-2 rounded-lg bg-[#0d1117] border border-[#21262d] flex items-center gap-2"
+                            className="px-3 py-2 rounded-lg bg-[#1a2233] border border-[#21262d] flex items-center gap-2"
                           >
                             <span
                               className="text-lg font-bold"
@@ -1414,7 +1453,7 @@ export default function JobDesignerPage() {
                       </div>
 
                       {/* 데이터 흐름 */}
-                      <div className="col-span-2 bg-[#0d1117] border border-[#21262d] rounded-lg p-3 overflow-y-auto">
+                      <div className="col-span-2 bg-[#1a2233] border border-[#21262d] rounded-lg p-3 overflow-y-auto">
                         <p className="text-[10px] font-semibold text-[#484f58] uppercase tracking-wider mb-2">
                           데이터 흐름
                         </p>
@@ -1457,7 +1496,7 @@ export default function JobDesignerPage() {
                       </div>
 
                       {/* 컴포넌트 목록 */}
-                      <div className="col-span-2 bg-[#0d1117] border border-[#21262d] rounded-lg p-3 overflow-y-auto">
+                      <div className="col-span-2 bg-[#1a2233] border border-[#21262d] rounded-lg p-3 overflow-y-auto">
                         <p className="text-[10px] font-semibold text-[#484f58] uppercase tracking-wider mb-2">
                           컴포넌트 구성
                         </p>
@@ -1567,7 +1606,7 @@ export default function JobDesignerPage() {
                 onMouseDown={handleAiPanelResizeStart}
                 className="absolute left-0 top-0 h-full w-1.5 cursor-ew-resize group z-20"
               >
-                <div className="h-full w-full bg-transparent group-hover:bg-[#bc8cff]/30 transition-colors" />
+                <div className="h-full w-full bg-transparent group-hover:bg-[#7c3aed]/20 transition-colors" />
               </div>
             )}
             <AiAgentPanel
@@ -1583,15 +1622,19 @@ export default function JobDesignerPage() {
 
         {/* Right Panel: Properties + Schema Tree */}
         <div
-          className="flex-shrink-0 flex flex-col border-l border-[#21262d] bg-[#161b27] relative"
-          style={{ width: rightPanelWidth }}
+          className="flex-shrink-0 flex flex-col relative"
+          style={{
+            width: rightPanelWidth,
+            background: "#ffffff",
+            borderLeft: "1px solid #e2e8f0",
+          }}
         >
           {/* 좌측 리사이즈 핸들 */}
           <div
             onMouseDown={handleRightPanelResizeStart}
             className="absolute left-0 top-0 h-full w-1.5 cursor-ew-resize group z-20"
           >
-            <div className="h-full w-full bg-transparent group-hover:bg-[#58a6ff]/30 transition-colors" />
+            <div className="h-full w-full bg-transparent group-hover:bg-[#2563eb]/20 transition-colors" />
           </div>
           {/* AI 패널 토글 탭 버튼 */}
           <button
@@ -1602,8 +1645,8 @@ export default function JobDesignerPage() {
               rounded-l-xl border border-r-0 transition-all duration-300 ease-in-out shadow-lg
               ${
                 aiPanelOpen
-                  ? "-left-3 w-3 h-16 bg-[#1a1f6e] border-[#3040cc] hover:bg-[#252d8e]"
-                  : "-left-6 w-6 h-20 bg-[#1f1035] border-[#3d2060] text-[#bc8cff] hover:bg-[#2a1550] hover:border-[#6e40c9] hover:shadow-[0_0_12px_rgba(188,140,255,0.3)]"
+                  ? "-left-3 w-3 h-16 bg-[#e0e7ff] border-[#6366f1] hover:bg-[#c7d2fe]"
+                  : "-left-6 w-6 h-20 bg-[#faf5ff] border-[#d8b4fe] text-[#7c3aed] hover:bg-[#f3e8ff] hover:border-[#a855f7] hover:shadow-[0_0_12px_rgba(124,58,237,0.2)]"
               }`}
           >
             {!aiPanelOpen && (
@@ -1627,9 +1670,16 @@ export default function JobDesignerPage() {
             ) : (
               <div className="flex flex-col items-center justify-center flex-1">
                 <div className="text-center px-6">
-                  <div className="w-10 h-10 rounded-lg bg-[#252d3d] flex items-center justify-center mx-auto mb-3">
+                  <div
+                    className="w-10 h-10 rounded-lg flex items-center justify-center mx-auto mb-3"
+                    style={{
+                      background: "#f1f5f9",
+                      border: "1px solid #e2e8f0",
+                    }}
+                  >
                     <svg
-                      className="w-5 h-5 text-[#484f58]"
+                      className="w-5 h-5"
+                      style={{ color: "#94a3b8" }}
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -1642,10 +1692,10 @@ export default function JobDesignerPage() {
                       />
                     </svg>
                   </div>
-                  <p className="text-[12px] text-[#484f58]">
+                  <p className="text-[12px]" style={{ color: "#64748b" }}>
                     노드를 클릭하여 설정
                   </p>
-                  <p className="text-[10px] text-[#30363d] mt-1">
+                  <p className="text-[10px] mt-1" style={{ color: "#94a3b8" }}>
                     T_MAP은 더블클릭 시<br />
                     매핑 에디터가 열립니다
                   </p>
@@ -1656,8 +1706,11 @@ export default function JobDesignerPage() {
 
           {/* Schema Tree Section */}
           <div
-            className="flex-shrink-0 border-t border-[#21262d] flex flex-col"
-            style={{ height: schemaTreeCollapsed ? 32 : schemaHeight }}
+            className="flex-shrink-0 flex flex-col"
+            style={{
+              height: schemaTreeCollapsed ? 32 : schemaHeight,
+              borderTop: "1px solid #e2e8f0",
+            }}
           >
             {/* Resize Handle */}
             {!schemaTreeCollapsed && (
@@ -1665,16 +1718,17 @@ export default function JobDesignerPage() {
                 onMouseDown={handleSchemaResizeStart}
                 className="h-1.5 flex-shrink-0 cursor-ns-resize group flex items-center justify-center"
               >
-                <div className="w-8 h-0.5 rounded-full bg-[#30363d] group-hover:bg-[#58a6ff] transition-colors" />
+                <div className="w-8 h-0.5 rounded-full bg-[#e2e8f0] group-hover:bg-[#2563eb] transition-colors" />
               </div>
             )}
             <button
               onClick={() => setSchemaTreeCollapsed((c) => !c)}
-              className="flex items-center justify-between px-3 py-2 hover:bg-[#252d3d] transition-colors flex-shrink-0"
+              className="flex items-center justify-between px-3 py-2 transition-colors flex-shrink-0 hover:bg-[#f8fafc]"
             >
               <div className="flex items-center gap-1.5">
                 <svg
-                  className="w-3 h-3 text-[#484f58]"
+                  className="w-3 h-3"
+                  style={{ color: "#94a3b8" }}
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -1686,12 +1740,16 @@ export default function JobDesignerPage() {
                     d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
                   />
                 </svg>
-                <span className="text-xs font-semibold text-[#8b949e]">
+                <span
+                  className="text-xs font-semibold"
+                  style={{ color: "#64748b" }}
+                >
                   Schema Browser
                 </span>
               </div>
               <svg
-                className={`w-3 h-3 text-[#484f58] transition-transform ${schemaTreeCollapsed ? "-rotate-90" : ""}`}
+                className={`w-3 h-3 transition-transform ${schemaTreeCollapsed ? "-rotate-90" : ""}`}
+                style={{ color: "#94a3b8" }}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
