@@ -18,6 +18,9 @@ htmlcov/
 venv/
 ENV/
 
+# Gradle (backend)
+.gradle/
+
 # Frontend dependencies
 node_modules/
 dist/
@@ -34,3 +37,6 @@ build/
 .agent/
 _agents/
 _agent/
+
+# Docker
+docker-compose.yml

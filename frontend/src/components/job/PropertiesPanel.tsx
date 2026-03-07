@@ -376,7 +376,7 @@ function FilterConfig({ config, onChange }: { config: Record<string, unknown>; o
           value={(config.condition as string) ?? ''}
           onChange={e => onChange('condition', e.target.value)}
           placeholder={"e.g. amount > 1000 AND status = 'ACTIVE'"}
-          rows={3}
+          rows={9}
           className="w-full bg-[#0d1117] border border-[#30363d] text-[#e6edf3] rounded-md px-3 py-2
             text-xs font-mono placeholder-[#484f58] focus:outline-none focus:border-[#58a6ff] resize-y"
         />
@@ -412,7 +412,7 @@ function MapConfig({ config, onChange }: { config: Record<string, unknown>; onCh
             : JSON.stringify(config.mappings ?? [], null, 2)}
           onChange={e => onChange('mappings', e.target.value)}
           placeholder={'[{"sourceColumn": "col_a", "targetName": "col_b", "expression": "", "type": "VARCHAR"}]'}
-          rows={6}
+          rows={18}
           className="w-full bg-[#0d1117] border border-[#30363d] text-[#e6edf3] rounded-md px-3 py-2
             text-xs font-mono placeholder-[#484f58] focus:outline-none focus:border-[#58a6ff] resize-y"
         />
@@ -438,7 +438,7 @@ function AggregateConfig({ config, onChange }: { config: Record<string, unknown>
             : JSON.stringify(config.aggregations ?? [], null, 2)}
           onChange={e => onChange('aggregations', e.target.value)}
           placeholder={'[{"column": "amount", "function": "SUM", "alias": "total_amount"}]'}
-          rows={4}
+          rows={12}
           className="w-full bg-[#0d1117] border border-[#30363d] text-[#e6edf3] rounded-md px-3 py-2
             text-xs font-mono placeholder-[#484f58] focus:outline-none focus:border-[#58a6ff] resize-y"
         />
@@ -483,7 +483,7 @@ function SortConfig({ config, onChange }: { config: Record<string, unknown>; onC
           : JSON.stringify(config.columns ?? [], null, 2)}
         onChange={e => onChange('columns', e.target.value)}
         placeholder={'[{"column": "created_at", "order": "DESC"}]'}
-        rows={4}
+        rows={12}
         className="w-full bg-[#0d1117] border border-[#30363d] text-[#e6edf3] rounded-md px-3 py-2
           text-xs font-mono placeholder-[#484f58] focus:outline-none focus:border-[#58a6ff] resize-y"
       />
@@ -508,7 +508,7 @@ function GenericConfig({ config, type, onChange }: {
         onChange={e => {
           try { onChange('__raw', JSON.parse(e.target.value)) } catch {}
         }}
-        rows={6}
+        rows={18}
         className="w-full bg-[#0d1117] border border-[#30363d] text-[#e6edf3] rounded-md px-3 py-2
           text-xs font-mono focus:outline-none focus:border-[#58a6ff] resize-y"
       />
@@ -520,7 +520,7 @@ function GenericConfig({ config, type, onChange }: {
 export default function PropertiesPanel({ node, onUpdate, onDelete }: Props) {
   if (!node) {
     return (
-      <div className="w-[300px] flex-shrink-0 bg-[#161b27] border-l border-[#21262d]
+      <div className="w-full bg-[#161b27] border-l border-[#21262d]
         flex flex-col items-center justify-center">
         <div className="text-center px-6">
           <div className="w-10 h-10 rounded-lg bg-[#252d3d] flex items-center justify-center mx-auto mb-3">
@@ -561,7 +561,7 @@ export default function PropertiesPanel({ node, onUpdate, onDelete }: Props) {
   }
 
   return (
-    <div className="w-[300px] flex-shrink-0 bg-[#161b27] border-l border-[#21262d]
+    <div className="w-full bg-[#161b27] border-l border-[#21262d]
       flex flex-col overflow-hidden">
       {/* Header */}
       <div className="px-4 py-3 border-b border-[#21262d] flex-shrink-0">
