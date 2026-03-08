@@ -21,9 +21,11 @@ const GROUP_COLORS: Record<string, { bg: string; border: string; icon: string; t
 }
 
 function getGroupColors(type: ComponentType) {
+  if (type === 'T_DB_COMMIT') return { bg: '#f0fdf4', border: '#86efac', icon: '#16a34a', text: '#15803d' }
+  if (type === 'T_DB_ROLLBACK') return { bg: '#fef2f2', border: '#fca5a5', icon: '#dc2626', text: '#b91c1c' }
   if (type.startsWith('T_JDBC_INPUT') || type.startsWith('T_FILE_INPUT')) return GROUP_COLORS.INPUT
   if (type.startsWith('T_JDBC_OUTPUT') || type.startsWith('T_FILE_OUTPUT')) return GROUP_COLORS.OUTPUT
-  if (type.startsWith('T_PRE_JOB') || type.startsWith('T_POST_JOB') || type.startsWith('T_RUN_JOB') || type.startsWith('T_SLEEP')) return GROUP_COLORS.ORCHESTRATION
+  if (type.startsWith('T_PRE_JOB') || type.startsWith('T_POST_JOB') || type.startsWith('T_RUN_JOB') || type.startsWith('T_SLEEP') || type.startsWith('T_DB_')) return GROUP_COLORS.ORCHESTRATION
   if (type.startsWith('T_LOG') || type.startsWith('T_DIE')) return GROUP_COLORS.LOGS
   if (type.startsWith('T_VALIDATE') || type.startsWith('T_PROFILE') || type.startsWith('T_LINEAGE')) return GROUP_COLORS.AETL
   return GROUP_COLORS.TRANSFORM
@@ -41,6 +43,18 @@ function ComponentIcon({ type }: { type: ComponentType }) {
   const isOutput = type === 'T_JDBC_OUTPUT' || type === 'T_FILE_OUTPUT'
   const isDB = type === 'T_JDBC_INPUT' || type === 'T_JDBC_OUTPUT'
 
+  if (type === 'T_DB_COMMIT') return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+        d="M5 13l4 4L19 7" />
+    </svg>
+  )
+  if (type === 'T_DB_ROLLBACK') return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+        d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+    </svg>
+  )
   if (isDB) return (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -83,8 +97,8 @@ const ETLNode = memo(({ id, data, selected }: NodeProps) => {
   const nodeData = data as unknown as NodeData
   const colors = getGroupColors(nodeData.componentType)
   const statusClass = STATUS_COLORS[nodeData.status ?? 'idle']
-  const isInput = nodeData.componentType.endsWith('_INPUT') || nodeData.componentType === 'T_PRE_JOB'
-  const isOutput = nodeData.componentType.endsWith('_OUTPUT') || nodeData.componentType === 'T_POST_JOB' || nodeData.componentType === 'T_DIE'
+  const isInput = nodeData.componentType === 'T_PRE_JOB'
+  const isOutput = nodeData.componentType === 'T_POST_JOB' || nodeData.componentType === 'T_DIE' || nodeData.componentType === 'T_DB_ROLLBACK'
 
   const { deleteElements, addNodes, getNode } = useReactFlow()
 

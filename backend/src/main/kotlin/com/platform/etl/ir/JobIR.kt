@@ -39,7 +39,8 @@ data class EdgeIR(
     val sourcePort: String,     // portId
     val target: String,         // nodeId
     val targetPort: String,     // portId
-    val linkType: LinkType
+    val linkType: LinkType,
+    val triggerCondition: TriggerCondition? = null
 )
 
 data class PortIR(
@@ -74,6 +75,11 @@ enum class LinkType {
     LOOKUP
 }
 
+enum class TriggerCondition {
+    ON_OK,      // 선행 노드 성공 시 실행
+    ON_ERROR    // 선행 노드 실패 시 실행
+}
+
 /**
  * 지원 컴포넌트 타입 (TOS 계열 벤치마킹)
  * INPUT / TRANSFORM / OUTPUT / ORCHESTRATION / LOGS / AETL_ADVANCED
@@ -102,6 +108,10 @@ enum class ComponentType {
     T_POST_JOB,             // Job 종료 후 처리
     T_RUN_JOB,              // 서브 Job 실행
     T_SLEEP,                // 대기
+
+    // ── Transaction Control ──────────────────────────
+    T_DB_COMMIT,            // 트랜잭션 커밋
+    T_DB_ROLLBACK,          // 트랜잭션 롤백
 
     // ── Logs & Error ────────────────────────────────
     T_LOG_ROW,              // 행 로깅

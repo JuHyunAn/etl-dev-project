@@ -38,6 +38,15 @@ dependencies {
     runtimeOnly("com.mysql:mysql-connector-j")           // MariaDB 호환
     runtimeOnly("com.oracle.database.jdbc:ojdbc11:23.4.0.24.05")
 
+    // Security + OAuth2
+    implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
+
+    // JWT (jjwt 0.12)
+    implementation("io.jsonwebtoken:jjwt-api:0.12.6")
+    runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
+    runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
+
     // Crypto (Connection 비밀번호 암호화)
     implementation("org.springframework.security:spring-security-crypto")
     implementation("commons-codec:commons-codec")

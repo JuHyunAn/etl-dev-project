@@ -69,7 +69,7 @@ export default function DashboardPage() {
     );
 
   return (
-    <div className="h-full overflow-y-auto" style={{ background: "#f0f4f8" }}>
+    <div className="h-full overflow-y-auto" style={{ background: "#ffffff" }}>
       {/* Welcome Banner */}
       <div
         className="px-8 py-6"

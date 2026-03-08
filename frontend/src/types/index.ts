@@ -3,6 +3,7 @@ export type JobStatus = 'DRAFT' | 'PUBLISHED'
 export type ExecutionStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED'
 export type EngineType = 'SQL_PUSHDOWN' | 'PYTHON_WORKER' | 'JVM_WORKER'
 export type LinkType = 'ROW' | 'TRIGGER' | 'REJECT' | 'LOOKUP'
+export type TriggerCondition = 'ON_OK' | 'ON_ERROR'
 export type PortType = 'ROW' | 'TRIGGER' | 'REJECT' | 'LOOKUP'
 
 export type ComponentType =
@@ -11,6 +12,7 @@ export type ComponentType =
   | 'T_JOIN' | 'T_CONVERT_TYPE' | 'T_REPLACE' | 'T_UNION_ROW'
   | 'T_JDBC_OUTPUT' | 'T_FILE_OUTPUT'
   | 'T_PRE_JOB' | 'T_POST_JOB' | 'T_RUN_JOB' | 'T_SLEEP'
+  | 'T_DB_COMMIT' | 'T_DB_ROLLBACK'
   | 'T_LOG_ROW' | 'T_DIE'
   | 'T_VALIDATE' | 'T_PROFILE' | 'T_LINEAGE'
 
@@ -102,6 +104,7 @@ export interface EdgeIR {
   target: string
   targetPort: string
   linkType: LinkType
+  triggerCondition?: TriggerCondition
 }
 
 export interface JobIR {
@@ -113,6 +116,11 @@ export interface JobIR {
   context: Record<string, string>
 }
 
+export interface LogRowData {
+  columns: string[]
+  rows: (string | number | boolean | null)[][]
+}
+
 export interface NodeResult {
   nodeId: string
   nodeType: string
@@ -122,6 +130,7 @@ export interface NodeResult {
   durationMs: number
   generatedSql?: string
   errorMessage?: string
+  rowSamples?: LogRowData
 }
 
 export interface ExecutionResult {

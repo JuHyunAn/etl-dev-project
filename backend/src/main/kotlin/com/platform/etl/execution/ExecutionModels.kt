@@ -33,6 +33,11 @@ data class ExecutionResult(
     val logs: List<String> = emptyList()
 )
 
+data class LogRowData(
+    val columns: List<String>,
+    val rows: List<List<Any?>>
+)
+
 data class NodeResult(
     val nodeId: String,
     val nodeType: String,
@@ -41,7 +46,8 @@ data class NodeResult(
     val rowsRejected: Long = 0,
     val durationMs: Long = 0,
     val generatedSql: String? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val rowSamples: LogRowData? = null
 )
 
 enum class ExecutionStatus {

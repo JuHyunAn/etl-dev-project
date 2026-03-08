@@ -54,7 +54,10 @@ class SqlPushdownCompiler(
             val node = ir.nodes.find { it.id == nodeId } ?: continue
             if (node.type == ComponentType.T_JDBC_OUTPUT) continue
 
-            val predecessorIds = (incomingEdges[nodeId] ?: emptyList()).map { it.source }
+            // ROW 엣지만 데이터 파이프라인 predecessor로 취급 (TRIGGER는 실행 제어 흐름)
+            val predecessorIds = (incomingEdges[nodeId] ?: emptyList())
+                .filter { it.linkType == LinkType.ROW }
+                .map { it.source }
             val prevCte = predecessorIds.firstOrNull()?.let { cteNameOf(it) }
 
             val body = buildCteSql(node, prevCte, predecessorIds) ?: continue

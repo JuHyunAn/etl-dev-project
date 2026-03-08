@@ -129,7 +129,7 @@ export default function ProjectsPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto" style={{ background: "#f0f4f8" }}>
+    <div className="h-full overflow-y-auto" style={{ background: "#ffffff" }}>
       <div
         className="px-6 py-5"
         style={{ borderBottom: "1px solid #e2e8f0", background: "#ffffff" }}

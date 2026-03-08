@@ -3,6 +3,10 @@
 # Environment variables
 .env
 
+# Local secrets (OAuth keys 등 실제 키 보관용, 절대 커밋 금지)
+**/application-local.yml
+**/application-local.properties
+
 # Cache files
 .schema_cache.json
 __pycache__/
@@ -30,13 +34,18 @@ build/
 # Logs
 *.log
 
-# Workspace specific
-# .claude/
+# Workspace specific (Claude, Gemini 등 AI 도구 로컬 설정)
+.claude/
+claude_memory/
 .gemini/
 .agents/
 .agent/
 _agents/
 _agent/
+
+# Reference images (앱 미사용, 용량 큰 스크린샷)
+frontend/img/ai.png
+frontend/img/ex.png
 
 # Docker
 docker-compose.yml

@@ -32,6 +32,7 @@ import AiAgentPanel from "../components/job/AiAgentPanel";
 import { nodeTypes } from "../components/job/CustomNodes";
 import type {
   ComponentType,
+  TriggerCondition,
   JobIR,
   ExecutionResult,
   ColumnInfo,
@@ -40,7 +41,7 @@ import type { AiGraphSpec, AiPatchSpec } from "../api/ai";
 import { buildAutoMappings } from "../utils/mapping";
 import Editor from "@monaco-editor/react";
 
-type BottomPanel = "sql" | "logs" | "summary" | null;
+type BottomPanel = "sql" | "logs" | "rowlogs" | "summary" | null;
 
 type EtlNodeData = {
   label: string;
@@ -62,13 +63,39 @@ function irToFlow(ir: JobIR): { nodes: Node[]; edges: Edge[] } {
       status: "idle",
     } as EtlNodeData,
   }));
-  const edges: Edge[] = ir.edges.map((e) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    animated: false,
-    style: { stroke: "#2563eb", strokeWidth: 2 },
-  }));
+  const edges: Edge[] = ir.edges.map((e) => {
+    const isTrigger = e.linkType === "TRIGGER";
+    const isOnError = e.triggerCondition === "ON_ERROR";
+    const style = isTrigger
+      ? {
+          stroke: isOnError ? "#dc2626" : "#16a34a",
+          strokeWidth: 2,
+          strokeDasharray: "6 3",
+        }
+      : { stroke: "#2563eb", strokeWidth: 2 };
+    const label = isTrigger ? (isOnError ? "err" : "ok") : undefined;
+    return {
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      animated: false,
+      style,
+      ...(label
+        ? {
+            label,
+            labelStyle: {
+              fill: isOnError ? "#dc2626" : "#16a34a",
+              fontSize: 9,
+              fontWeight: "bold",
+            },
+            labelBgStyle: { fill: "#ffffff", fillOpacity: 0.9 },
+            labelBgPadding: [3, 1] as [number, number],
+            labelBgBorderRadius: 2,
+          }
+        : {}),
+      data: { linkType: e.linkType, triggerCondition: e.triggerCondition },
+    };
+  });
   return { nodes, edges };
 }
 
@@ -100,7 +127,13 @@ function flowToIR(
       sourcePort: "out",
       target: e.target,
       targetPort: "in",
-      linkType: "ROW",
+      linkType: ((e.data as Record<string, unknown>)?.linkType ?? "ROW") as
+        | "ROW"
+        | "TRIGGER"
+        | "REJECT"
+        | "LOOKUP",
+      triggerCondition: ((e.data as Record<string, unknown>)
+        ?.triggerCondition ?? undefined) as TriggerCondition | undefined,
     })),
     context,
   };
@@ -335,8 +368,18 @@ export default function JobDesignerPage() {
   const schemaResizeStartY = useRef(0);
   const schemaResizeStartH = useRef(0);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [activeLogNodeId, setActiveLogNodeId] = useState<string | null>(null);
   const [contextVars, setContextVars] = useState<CtxVar[]>([]);
   const [showContextPanel, setShowContextPanel] = useState(false);
+  const [nodeContextMenu, setNodeContextMenu] = useState<{
+    nodeId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [pendingTrigger, setPendingTrigger] = useState<{
+    sourceNodeId: string;
+    condition: TriggerCondition;
+  } | null>(null);
 
   // 패널 리사이즈 상태
   const [aiPanelWidth, setAiPanelWidth] = useState(320);
@@ -361,6 +404,18 @@ export default function JobDesignerPage() {
         .then(setConnections)
         .catch(() => {});
     }
+  }, []);
+
+  // ESC: 우클릭 메뉴 + 트리거 대기 상태 해제
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setNodeContextMenu(null);
+        setPendingTrigger(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -408,9 +463,44 @@ export default function JobDesignerPage() {
     [setEdges],
   );
 
-  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-    setSelectedNode(node);
-  }, []);
+  const onNodeClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      if (pendingTrigger) {
+        if (pendingTrigger.sourceNodeId !== node.id) {
+          const cond = pendingTrigger.condition;
+          const style =
+            cond === "ON_OK"
+              ? { stroke: "#16a34a", strokeWidth: 2, strokeDasharray: "6 3" }
+              : { stroke: "#dc2626", strokeWidth: 2, strokeDasharray: "6 3" };
+          setEdges((eds) => [
+            ...eds,
+            {
+              id: `trigger-${pendingTrigger.sourceNodeId}-${node.id}-${Date.now()}`,
+              source: pendingTrigger.sourceNodeId,
+              target: node.id,
+              animated: false,
+              style,
+              label: cond === "ON_OK" ? "ok" : "err",
+              labelStyle: {
+                fill: cond === "ON_OK" ? "#16a34a" : "#dc2626",
+                fontSize: 9,
+                fontWeight: "bold",
+              },
+              labelBgStyle: { fill: "#ffffff", fillOpacity: 0.9 },
+              labelBgPadding: [3, 1] as [number, number],
+              labelBgBorderRadius: 2,
+              data: { linkType: "TRIGGER", triggerCondition: cond },
+            },
+          ]);
+        }
+        setPendingTrigger(null);
+        return;
+      }
+      setNodeContextMenu(null);
+      setSelectedNode(node);
+    },
+    [pendingTrigger, setEdges],
+  );
 
   const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: Node) => {
     const d = node.data as EtlNodeData;
@@ -419,8 +509,16 @@ export default function JobDesignerPage() {
     }
   }, []);
 
+  const onNodeContextMenu = useCallback((e: React.MouseEvent, node: Node) => {
+    e.preventDefault();
+    setNodeContextMenu({ nodeId: node.id, x: e.clientX, y: e.clientY });
+    setSelectedNode(node);
+  }, []);
+
   const onPaneClick = useCallback(() => {
     setSelectedNode(null);
+    setNodeContextMenu(null);
+    setPendingTrigger(null);
   }, []);
 
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -714,12 +812,24 @@ export default function JobDesignerPage() {
     );
     // 실행 시작: 엣지 초기화 + animated
     setEdges((es) =>
-      es.map((e) => ({
-        ...e,
-        label: undefined,
-        animated: true,
-        style: { stroke: "#2563eb", strokeWidth: 2 },
-      })),
+      es.map((e) => {
+        const isTrigger =
+          (e.data as Record<string, unknown>)?.linkType === "TRIGGER";
+        const isOnError =
+          (e.data as Record<string, unknown>)?.triggerCondition === "ON_ERROR";
+        return {
+          ...e,
+          label: isTrigger ? (isOnError ? "err" : "ok") : undefined,
+          animated: !isTrigger,
+          style: isTrigger
+            ? {
+                stroke: isOnError ? "#dc2626" : "#16a34a",
+                strokeWidth: 2,
+                strokeDasharray: "6 3",
+              }
+            : { stroke: "#2563eb", strokeWidth: 2 },
+        };
+      }),
     );
 
     try {
@@ -762,6 +872,31 @@ export default function JobDesignerPage() {
       // 완료: 엣지에 rows + 색상 표기
       setEdges((es) =>
         es.map((e) => {
+          const isTrigger =
+            (e.data as Record<string, unknown>)?.linkType === "TRIGGER";
+          const isOnError =
+            (e.data as Record<string, unknown>)?.triggerCondition ===
+            "ON_ERROR";
+          if (isTrigger) {
+            return {
+              ...e,
+              animated: false,
+              style: {
+                stroke: isOnError ? "#dc2626" : "#16a34a",
+                strokeWidth: 2,
+                strokeDasharray: "6 3",
+              },
+              label: isOnError ? "err" : "ok",
+              labelStyle: {
+                fill: isOnError ? "#dc2626" : "#16a34a",
+                fontSize: 9,
+                fontWeight: "bold",
+              },
+              labelBgStyle: { fill: "#ffffff", fillOpacity: 0.9 },
+              labelBgPadding: [3, 1] as [number, number],
+              labelBgBorderRadius: 2,
+            };
+          }
           const nr = result.nodeResults[e.source];
           if (nr?.rowsProcessed !== undefined) {
             const isZero = nr.rowsProcessed === 0;
@@ -818,11 +953,24 @@ export default function JobDesignerPage() {
         })),
       );
       setEdges((es) =>
-        es.map((e) => ({
-          ...e,
-          animated: false,
-          style: { stroke: "#f85149", strokeWidth: 2 },
-        })),
+        es.map((e) => {
+          const isTrigger =
+            (e.data as Record<string, unknown>)?.linkType === "TRIGGER";
+          const isOnError =
+            (e.data as Record<string, unknown>)?.triggerCondition ===
+            "ON_ERROR";
+          return {
+            ...e,
+            animated: false,
+            style: isTrigger
+              ? {
+                  stroke: isOnError ? "#dc2626" : "#16a34a",
+                  strokeWidth: 2,
+                  strokeDasharray: "6 3",
+                }
+              : { stroke: "#f85149", strokeWidth: 2 },
+          };
+        }),
       );
     } finally {
       setRunning(false);
@@ -1100,6 +1248,7 @@ export default function JobDesignerPage() {
             size="sm"
             onClick={handleRun}
             disabled={running}
+            className="text-[#1268B3]"
           >
             {running ? (
               <Spinner size="sm" />
@@ -1172,6 +1321,7 @@ export default function JobDesignerPage() {
               onConnect={onConnect}
               onNodeClick={onNodeClick}
               onNodeDoubleClick={onNodeDoubleClick}
+              onNodeContextMenu={onNodeContextMenu}
               onPaneClick={onPaneClick}
               onInit={setRfInstance}
               nodeTypes={nodeTypes}
@@ -1202,6 +1352,34 @@ export default function JobDesignerPage() {
                 maskColor="rgba(240,244,248,0.8)"
               />
             </ReactFlow>
+
+            {/* Trigger 대기 배너 */}
+            {pendingTrigger && (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+                <div
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium shadow-md"
+                  style={{
+                    background:
+                      pendingTrigger.condition === "ON_OK"
+                        ? "#f0fdf4"
+                        : "#fef2f2",
+                    border: `1px solid ${pendingTrigger.condition === "ON_OK" ? "#86efac" : "#fca5a5"}`,
+                    color:
+                      pendingTrigger.condition === "ON_OK"
+                        ? "#15803d"
+                        : "#b91c1c",
+                  }}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full animate-pulse ${pendingTrigger.condition === "ON_OK" ? "bg-[#16a34a]" : "bg-[#dc2626]"}`}
+                  />
+                  {pendingTrigger.condition === "ON_OK"
+                    ? "On Component Ok"
+                    : "On Component Error"}{" "}
+                  — 대상 노드를 클릭하세요 (ESC 취소)
+                </div>
+              </div>
+            )}
 
             {previewMode && (
               <>
@@ -1261,6 +1439,73 @@ export default function JobDesignerPage() {
                   </div>
                 </div>
               </>
+            )}
+
+            {/* 우클릭 컨텍스트 메뉴 */}
+            {nodeContextMenu && (
+              <div
+                style={{
+                  position: "fixed",
+                  left: nodeContextMenu.x,
+                  top: nodeContextMenu.y,
+                  zIndex: 1000,
+                  border: "1px solid #e2e8f0",
+                }}
+                className="bg-white rounded-lg shadow-xl py-1 min-w-[180px]"
+                onMouseLeave={() => setNodeContextMenu(null)}
+              >
+                <div
+                  className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+                  style={{
+                    color: "#94a3b8",
+                    borderBottom: "1px solid #e2e8f0",
+                  }}
+                >
+                  Trigger
+                </div>
+                <button
+                  onClick={() => {
+                    setPendingTrigger({
+                      sourceNodeId: nodeContextMenu.nodeId,
+                      condition: "ON_OK",
+                    });
+                    setNodeContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors"
+                  style={{ color: "#374151" }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.background =
+                      "#f0fdf4";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = "";
+                  }}
+                >
+                  <span className="w-2 h-2 rounded-full bg-[#16a34a] flex-shrink-0" />
+                  On Component Ok
+                </button>
+                <button
+                  onClick={() => {
+                    setPendingTrigger({
+                      sourceNodeId: nodeContextMenu.nodeId,
+                      condition: "ON_ERROR",
+                    });
+                    setNodeContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors"
+                  style={{ color: "#374151" }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.background =
+                      "#fef2f2";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = "";
+                  }}
+                >
+                  <span className="w-2 h-2 rounded-full bg-[#dc2626] flex-shrink-0" />
+                  On Component Error
+                </button>
+              </div>
             )}
 
             {nodes.length === 0 && (
@@ -1351,6 +1596,29 @@ export default function JobDesignerPage() {
                       {executionResult.status}
                     </span>
                   )}
+                </button>
+                <button
+                  onClick={() => setBottomPanel("rowlogs")}
+                  className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
+                    ${
+                      bottomPanel === "rowlogs"
+                        ? "border-[#f0883e] text-[#f0883e]"
+                        : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
+                    }`}
+                >
+                  Row Logs
+                  {executionResult &&
+                    Object.values(executionResult.nodeResults).some(
+                      (r) => r.rowSamples,
+                    ) && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] bg-[#2d1a07] text-[#f0883e]">
+                        {
+                          Object.values(executionResult.nodeResults).filter(
+                            (r) => r.rowSamples,
+                          ).length
+                        }
+                      </span>
+                    )}
                 </button>
                 <button
                   onClick={() => setBottomPanel("summary")}
@@ -1586,6 +1854,144 @@ export default function JobDesignerPage() {
                   )}
                 </div>
               )}
+
+              {bottomPanel === "rowlogs" &&
+                (() => {
+                  const logNodes = executionResult
+                    ? Object.entries(executionResult.nodeResults).filter(
+                        ([, r]) => r.rowSamples,
+                      )
+                    : [];
+                  const currentId =
+                    activeLogNodeId &&
+                    logNodes.some(([id]) => id === activeLogNodeId)
+                      ? activeLogNodeId
+                      : (logNodes[0]?.[0] ?? null);
+                  const active = logNodes.find(([id]) => id === currentId);
+                  return (
+                    <div className="flex-1 flex flex-col overflow-hidden">
+                      {running && (
+                        <div className="flex items-center gap-2 text-[#58a6ff] p-4 text-xs font-mono">
+                          <Spinner size="sm" />
+                          <span>Executing pipeline...</span>
+                        </div>
+                      )}
+                      {!running && !executionResult && (
+                        <p className="p-4 text-xs font-mono text-[#484f58]">
+                          No execution yet. T_LOG_ROW 노드를 캔버스에 추가하고
+                          실행하세요.
+                        </p>
+                      )}
+                      {executionResult && logNodes.length === 0 && (
+                        <p className="p-4 text-xs font-mono text-[#484f58]">
+                          T_LOG_ROW 노드가 없거나 캡처된 데이터가 없습니다.
+                        </p>
+                      )}
+                      {executionResult && logNodes.length > 0 && (
+                        <>
+                          {/* 노드 탭 */}
+                          <div className="flex items-center gap-1 px-3 pt-1 pb-0 border-b border-[#30363d] flex-shrink-0">
+                            {logNodes.map(([id, r]) => {
+                              const label =
+                                (
+                                  nodes.find((n) => n.id === id)?.data as
+                                    | { label?: string }
+                                    | undefined
+                                )?.label ?? r.nodeType;
+                              return (
+                                <button
+                                  key={id}
+                                  onClick={() => setActiveLogNodeId(id)}
+                                  className={`px-2.5 py-1.5 text-[10px] font-medium border-b-2 transition-colors whitespace-nowrap
+                                  ${
+                                    currentId === id
+                                      ? "border-[#f0883e] text-[#f0883e]"
+                                      : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
+                                  }`}
+                                >
+                                  {label}
+                                  <span className="ml-1 text-[#484f58]">
+                                    ({r.rowSamples!.rows.length} rows)
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {/* 그리드 테이블 */}
+                          {active && active[1].rowSamples && (
+                            <div className="flex-1 overflow-auto">
+                              <table className="text-[11px] font-mono w-max min-w-full border-collapse">
+                                <thead
+                                  className="sticky top-0 z-10"
+                                  style={{ background: "#1a2233" }}
+                                >
+                                  <tr>
+                                    <th className="px-2 py-1.5 text-left text-[#484f58] font-medium border-r border-b border-[#21262d] w-8">
+                                      #
+                                    </th>
+                                    {active[1].rowSamples.columns.map((col) => (
+                                      <th
+                                        key={col}
+                                        className="px-3 py-1.5 text-left text-[#8b949e] font-medium border-r border-b border-[#21262d] whitespace-nowrap"
+                                      >
+                                        {col}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {active[1].rowSamples.rows.map((row, ri) => (
+                                    <tr
+                                      key={ri}
+                                      style={{
+                                        background:
+                                          ri % 2 === 0 ? "#232b37" : "#1e2632",
+                                      }}
+                                      className="hover:bg-[#2a3547] transition-colors"
+                                    >
+                                      <td className="px-2 py-1 text-[#484f58] border-r border-[#21262d] text-center">
+                                        {ri + 1}
+                                      </td>
+                                      {row.map((cell, ci) => (
+                                        <td
+                                          key={ci}
+                                          className="px-3 py-1 border-r border-[#21262d] whitespace-nowrap max-w-[240px] truncate"
+                                          style={{
+                                            color:
+                                              cell === null
+                                                ? "#484f58"
+                                                : typeof cell === "number"
+                                                  ? "#79c0ff"
+                                                  : typeof cell === "boolean"
+                                                    ? "#56d364"
+                                                    : "#c9d1d9",
+                                          }}
+                                          title={
+                                            cell === null
+                                              ? "NULL"
+                                              : String(cell)
+                                          }
+                                        >
+                                          {cell === null ? (
+                                            <span className="italic text-[#484f58]">
+                                              NULL
+                                            </span>
+                                          ) : (
+                                            String(cell)
+                                          )}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
             </div>
           )}
         </div>

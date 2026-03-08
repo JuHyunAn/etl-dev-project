@@ -1,6 +1,21 @@
 spring:
   application:
     name: etl-platform
+  profiles:
+    active: local   # application-local.yml 자동 로드 (실제 OAuth 키)
+
+  security:
+    oauth2:
+      client:
+        registration:
+          github:
+            client-id: ${GITHUB_CLIENT_ID:your-github-client-id}
+            client-secret: ${GITHUB_CLIENT_SECRET:your-github-client-secret}
+            scope: read:user,user:email
+          google:
+            client-id: ${GOOGLE_CLIENT_ID:your-google-client-id}
+            client-secret: ${GOOGLE_CLIENT_SECRET:your-google-client-secret}
+            scope: profile,email
 
   datasource:
     url: jdbc:postgresql://localhost:5433/etl_platform
@@ -29,8 +44,14 @@ server:
   port: 8080
 
 etl:
+  frontend-url: ${FRONTEND_URL:http://localhost:3001}
   encryption:
     secret: ${ENCRYPTION_SECRET:default-dev-secret-change-in-prod}
+  jwt:
+    # Base64로 인코딩된 256-bit 이상 시크릿 (운영 시 반드시 환경변수로 교체)
+    secret: ${JWT_SECRET:dGhpcy1pcy1hLXZlcnktbG9uZy1zZWNyZXQta2V5LWZvci1ldGwtcGxhdGZvcm0tMjAyNg==}
+    access-token-minutes: 15
+    refresh-token-days: 7
   execution:
     timeout-seconds: 3600
     max-rows-preview: 100
