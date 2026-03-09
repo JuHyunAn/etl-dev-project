@@ -9,7 +9,7 @@ function Breadcrumb() {
   const labels: Record<string, string> = {
     projects: "Projects",
     connections: "Connections",
-    executions: "Runs",
+    executions: "Run history",
     designer: "Job Designer",
   };
 

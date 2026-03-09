@@ -149,45 +149,59 @@ export default function MappingEditorModal({
     });
   }, [nodeId, nodes, edges]);
 
-  // tMap 아웃풋 연결된 T_JDBC_OUTPUT 노드에서 타겟 컬럼 로드
+  // tMap 다운스트림에서 T_JDBC_OUTPUT 노드 탐색 (BFS, 중간에 LOG_ROW 등 있어도 탐지)
   useEffect(() => {
-    const outputEdges = edges.filter((e) => e.source === nodeId);
-    for (const edge of outputEdges) {
-      const node = nodes.find((n) => n.id === edge.target);
-      const data = (node?.data ?? {}) as Record<string, unknown>;
-      if (data.componentType !== "T_JDBC_OUTPUT") continue;
+    const visited = new Set<string>();
+    const queue = [nodeId];
+    let outputNode: Node | undefined;
 
-      const config = (data.config ?? {}) as Record<string, unknown>;
-      const cachedCols = Array.isArray(config.columns)
-        ? (config.columns as ColumnInfo[])
-        : null;
-
-      if (cachedCols && cachedCols.length > 0) {
-        const map = new Map<string, string>();
-        cachedCols.forEach((c) =>
-          map.set(c.columnName.toLowerCase(), c.dataType),
-        );
-        setTargetColumnMap(map);
-        return;
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      for (const edge of edges.filter((e) => e.source === current)) {
+        const node = nodes.find((n) => n.id === edge.target);
+        if (!node) continue;
+        const data = (node.data ?? {}) as Record<string, unknown>;
+        if (data.componentType === "T_JDBC_OUTPUT") {
+          outputNode = node;
+          break;
+        }
+        queue.push(edge.target);
       }
-
-      const connectionId = config.connectionId as string;
-      const tableName = config.tableName as string;
-      if (!connectionId || !tableName) continue;
-
-      const parts = tableName.split(".");
-      const table = parts[parts.length - 1];
-      const schema = parts.length > 1 ? parts[0] : undefined;
-      schemaApi
-        .getColumns(connectionId, table, schema)
-        .then((cols) => {
-          const map = new Map<string, string>();
-          cols.forEach((c) => map.set(c.columnName.toLowerCase(), c.dataType));
-          setTargetColumnMap(map);
-        })
-        .catch(() => {});
-      break; // 첫 번째 T_JDBC_OUTPUT만 사용
+      if (outputNode) break;
     }
+
+    if (!outputNode) return;
+
+    const data = (outputNode.data ?? {}) as Record<string, unknown>;
+    const config = (data.config ?? {}) as Record<string, unknown>;
+    const cachedCols = Array.isArray(config.columns)
+      ? (config.columns as ColumnInfo[])
+      : null;
+
+    if (cachedCols && cachedCols.length > 0) {
+      const map = new Map<string, string>();
+      cachedCols.forEach((c) => map.set(c.columnName.toLowerCase(), c.dataType));
+      setTargetColumnMap(map);
+      return;
+    }
+
+    const connectionId = config.connectionId as string;
+    const tableName = config.tableName as string;
+    if (!connectionId || !tableName) return;
+
+    const parts = tableName.split(".");
+    const table = parts[parts.length - 1];
+    const schema = parts.length > 1 ? parts[0] : undefined;
+    schemaApi
+      .getColumns(connectionId, table, schema)
+      .then((cols) => {
+        const map = new Map<string, string>();
+        cols.forEach((c) => map.set(c.columnName.toLowerCase(), c.dataType));
+        setTargetColumnMap(map);
+      })
+      .catch(() => {});
   }, [nodeId, nodes, edges]);
 
   // sourceGroups 컬럼 로드 완료 후, sourceNodeId 없는 행(AI 패치 등)을 자동 매핑
@@ -218,11 +232,38 @@ export default function MappingEditorModal({
   );
 
   const handleAutoMap = () => {
-    const auto: MappingRow[] = allSourceCols.map(
-      ({ nodeId: nid, col }) =>
+    if (targetColumnMap.size > 0) {
+      // 타겟 컬럼 순서 기준으로 행 생성
+      // 소스에 매칭되는 컬럼은 자동 매핑, 없는 컬럼은 빈 행 추가
+      const mappedSourceCols = new Set<string>();
+      const auto: MappingRow[] = Array.from(targetColumnMap.entries()).map(
+        ([targetCol, targetType]) => {
+          const matched = allSourceCols.find(
+            ({ col }) => col.columnName.toLowerCase() === targetCol,
+          );
+          if (matched) {
+            mappedSourceCols.add(targetCol);
+            return buildAutoMappings(matched.nodeId, [matched.col], targetColumnMap)[0];
+          }
+          // 소스에 없는 타겟 컬럼 → 빈 행
+          return {
+            id: `auto-empty-${targetCol}-${Date.now()}`,
+            sourceNodeId: "",
+            sourceColumn: "",
+            targetName: targetCol,
+            expression: "",
+            type: targetType,
+          };
+        },
+      );
+      setMappings(auto);
+    } else {
+      // 타겟 미연결 시 소스 전체 매핑 (기존 동작)
+      const auto: MappingRow[] = allSourceCols.map(({ nodeId: nid, col }) =>
         buildAutoMappings(nid, [col], targetColumnMap)[0],
-    );
-    setMappings(auto);
+      );
+      setMappings(auto);
+    }
     setSelectedSourceCol(null);
   };
 
@@ -626,7 +667,15 @@ export default function MappingEditorModal({
                   </p>
                 </div>
               ) : (
-                mappings.map((m, idx) => {
+                <>
+                {targetColumnMap.size > 0 && (
+                  <datalist id="target-cols-datalist">
+                    {Array.from(targetColumnMap.keys()).map((col) => (
+                      <option key={col} value={col} />
+                    ))}
+                  </datalist>
+                )}
+                {mappings.map((m, idx) => {
                   const color = m.sourceNodeId
                     ? getSourceColor(m.sourceNodeId)
                     : "#94a3b8";
@@ -688,14 +737,19 @@ export default function MappingEditorModal({
                       {/* Target Name */}
                       <div className="pr-2">
                         <input
+                          list={targetColumnMap.size > 0 ? "target-cols-datalist" : undefined}
                           value={m.targetName}
                           onChange={(e) =>
                             updateMapping(m.id, "targetName", e.target.value)
                           }
                           onClick={(e) => e.stopPropagation()}
                           placeholder="target_column"
-                          className="w-full bg-transparent text-xs text-[#374151] font-mono
-                            focus:outline-none border-b border-transparent focus:border-[#2563eb] py-0.5"
+                          className={`w-full bg-transparent text-xs font-mono
+                            focus:outline-none border-b border-transparent focus:border-[#2563eb] py-0.5
+                            ${targetColumnMap.size > 0 && m.targetName && !targetColumnMap.has(m.targetName.toLowerCase())
+                              ? "text-[#dc2626]"
+                              : "text-[#374151]"
+                            }`}
                         />
                       </div>
 
@@ -769,7 +823,8 @@ export default function MappingEditorModal({
                       </div>
                     </div>
                   );
-                })
+                })}
+                </>
               )}
 
               {/* Add Row */}

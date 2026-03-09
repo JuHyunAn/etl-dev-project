@@ -34,7 +34,26 @@ class SqlPushdownAdapter(
         }
         if (hasCycle(ir)) errors += "Job에 순환 참조(Cycle)가 존재합니다"
 
+        // 미치환 context 변수 검사
+        ir.nodes.forEach { node ->
+            collectStrings(node.config).forEach { value ->
+                contextPattern.findAll(value).forEach { mr ->
+                    val varName = mr.groupValues[1]
+                    if (!plan.context.containsKey(varName))
+                        errors += "노드 '${node.label}': context.${varName} 값이 설정되지 않았습니다"
+                }
+            }
+        }
+
         return errors
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun collectStrings(value: Any?): List<String> = when (value) {
+        is String    -> listOf(value)
+        is List<*>   -> value.flatMap { collectStrings(it) }
+        is Map<*, *> -> (value as Map<String, Any?>).values.flatMap { collectStrings(it) }
+        else         -> emptyList()
     }
 
     // ── Execute ───────────────────────────────────────────────────
@@ -45,27 +64,32 @@ class SqlPushdownAdapter(
         val nodeResults = mutableMapOf<String, NodeResult>()
         val logs = mutableListOf<String>()
 
+        // context 변수를 IR 전체에 미리 치환 (컴파일러도 치환된 IR을 사용하도록)
+        val resolvedPlan = if (plan.context.isEmpty()) plan else plan.copy(
+            ir = plan.ir.copy(nodes = plan.ir.nodes.map { resolveNode(it, plan.context) })
+        )
+
         // 트랜잭션 모드: T_DB_COMMIT 또는 T_DB_ROLLBACK 노드가 존재하면 활성화
-        val transactionMode = plan.ir.nodes.any {
+        val transactionMode = resolvedPlan.ir.nodes.any {
             it.type == ComponentType.T_DB_COMMIT || it.type == ComponentType.T_DB_ROLLBACK
         }
         val sharedConnections: MutableMap<String, java.sql.Connection>? =
             if (transactionMode) mutableMapOf() else null
 
         // Trigger 엣지 존재 여부 — 있으면 노드 실패 시 즉시 중단하지 않고 ON_ERROR 경로 처리
-        val hasTriggerEdges = plan.ir.edges.any { it.linkType == com.platform.etl.ir.LinkType.TRIGGER }
+        val hasTriggerEdges = resolvedPlan.ir.edges.any { it.linkType == com.platform.etl.ir.LinkType.TRIGGER }
 
         try {
-            logs += "[${LocalDateTime.now()}] Job 실행 시작: ${plan.jobId}"
+            logs += "[${LocalDateTime.now()}] Job 실행 시작: ${resolvedPlan.jobId}"
             if (transactionMode) logs += "[TX] 트랜잭션 모드 활성화"
             if (hasTriggerEdges) logs += "[TRIGGER] Trigger 모드 활성화"
 
-            for (nodeId in plan.sortedNodeIds) {
-                val node = plan.ir.nodes.find { it.id == nodeId } ?: continue
+            for (nodeId in resolvedPlan.sortedNodeIds) {
+                val node = resolvedPlan.ir.nodes.find { it.id == nodeId } ?: continue
 
                 // Trigger 조건 체크: 이 노드로 들어오는 TRIGGER 엣지가 있으면 조건 확인
                 if (hasTriggerEdges) {
-                    val skipReason = checkTriggerCondition(nodeId, plan.ir, nodeResults)
+                    val skipReason = checkTriggerCondition(nodeId, resolvedPlan.ir, nodeResults)
                     if (skipReason != null) {
                         nodeResults[nodeId] = NodeResult(nodeId, node.type.name, ExecutionStatus.SKIPPED, durationMs = 0)
                         logs += "[SKIP] 노드 '${node.label}': $skipReason"
@@ -73,8 +97,7 @@ class SqlPushdownAdapter(
                     }
                 }
 
-                val resolved = resolveNode(node, plan.context)
-                val result   = executeNode(resolved, plan, logs, sharedConnections)
+                val result = executeNode(node, resolvedPlan, logs, sharedConnections)
                 nodeResults[nodeId] = result
 
                 if (result.status == ExecutionStatus.FAILED) {
@@ -85,7 +108,7 @@ class SqlPushdownAdapter(
                             sharedConnections.values.forEach { runCatching { it.rollback() } }
                             logs += "[TX] 트랜잭션 롤백 완료 (오류)"
                         }
-                        return buildResult(plan, ExecutionStatus.FAILED, startedAt, startMs,
+                        return buildResult(resolvedPlan, ExecutionStatus.FAILED, startedAt, startMs,
                             nodeResults, logs, result.errorMessage)
                     }
                     // Trigger 모드: 계속 실행 (ON_ERROR 경로가 처리)
@@ -97,12 +120,19 @@ class SqlPushdownAdapter(
             logs += "[${LocalDateTime.now()}] Job 완료"
             val failedResult = nodeResults.values.firstOrNull { it.status == ExecutionStatus.FAILED }
             val overallStatus = if (failedResult != null) ExecutionStatus.FAILED else ExecutionStatus.SUCCESS
-            return buildResult(plan, overallStatus, startedAt, startMs, nodeResults, logs, failedResult?.errorMessage)
+
+            // 트랜잭션 모드: 명시적 T_DB_COMMIT 없이 성공한 경우 자동 커밋
+            if (sharedConnections != null && overallStatus == ExecutionStatus.SUCCESS) {
+                sharedConnections.values.forEach { runCatching { it.commit() } }
+                logs += "[TX] 트랜잭션 자동 커밋 완료"
+            }
+
+            return buildResult(resolvedPlan, overallStatus, startedAt, startMs, nodeResults, logs, failedResult?.errorMessage)
 
         } catch (e: Exception) {
-            log.error("Job 실행 실패: ${plan.jobId}", e)
+            log.error("Job 실행 실패: ${resolvedPlan.jobId}", e)
             sharedConnections?.values?.forEach { runCatching { it.rollback() } }
-            return buildResult(plan, ExecutionStatus.FAILED, startedAt, startMs, nodeResults, logs, e.message)
+            return buildResult(resolvedPlan, ExecutionStatus.FAILED, startedAt, startMs, nodeResults, logs, e.message)
         } finally {
             sharedConnections?.values?.forEach { runCatching { it.close() } }
         }

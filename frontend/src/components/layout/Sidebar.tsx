@@ -78,7 +78,7 @@ const navItems = [
         />
       </svg>
     ),
-    label: "Runs",
+    label: "Run history",
   },
 ];
 

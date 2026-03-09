@@ -50,11 +50,13 @@ class ExecutionService(
     private fun buildPlan(jobId: UUID, ir: JobIR, context: Map<String, String>,
                           previewMode: Boolean): ExecutionPlan {
         val sortedIds = topologicalSort(ir)
+        // ir.context(Job 정의 기본값) + 런타임 context (런타임이 우선)
+        val mergedContext = ir.context + context
         return ExecutionPlan(
             jobId = jobId,
             ir = ir,
             sortedNodeIds = sortedIds,
-            context = context,
+            context = mergedContext,
             previewMode = previewMode
         )
     }

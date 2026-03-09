@@ -96,7 +96,7 @@ const PALETTE: { group: string; color: string; items: ComponentDef[] }[] = [
 interface Props {
   onDragStart: (type: ComponentType, label: string) => void
   showContextPanel?: boolean
-  onToggleContextPanel?: () => void
+  onToggleContextPanel?: (btnEl: HTMLButtonElement) => void
   varsCount?: number
 }
 
@@ -147,7 +147,7 @@ export default function ComponentPalette({ onDragStart, showContextPanel, onTogg
             </div>
             <div className="space-y-0.5 px-2">
               <button
-                onClick={onToggleContextPanel}
+                onClick={(e) => onToggleContextPanel?.(e.currentTarget)}
                 className={`w-full flex items-center gap-2 px-2 py-1.5 rounded transition-colors select-none`}
                 style={{ background: showContextPanel ? '#fef2f2' : '' }}
                 onMouseEnter={e => { if (!showContextPanel) (e.currentTarget as HTMLElement).style.background = '#f8fafc' }}

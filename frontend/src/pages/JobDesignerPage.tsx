@@ -347,6 +347,7 @@ export default function JobDesignerPage() {
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
   const [running, setRunning] = useState(false);
   const [bottomPanel, setBottomPanel] = useState<BottomPanel>("sql");
   const [executionResult, setExecutionResult] =
@@ -371,6 +372,8 @@ export default function JobDesignerPage() {
   const [activeLogNodeId, setActiveLogNodeId] = useState<string | null>(null);
   const [contextVars, setContextVars] = useState<CtxVar[]>([]);
   const [showContextPanel, setShowContextPanel] = useState(false);
+  const [contextPanelTop, setContextPanelTop] = useState(0);
+  const sidebarRef = useRef<HTMLDivElement>(null);
   const [nodeContextMenu, setNodeContextMenu] = useState<{
     nodeId: string;
     x: number;
@@ -776,15 +779,38 @@ export default function JobDesignerPage() {
     if (!projectId || !jobId) return;
     setSaving(true);
     try {
-      const ir = flowToIR(jobId, nodes, edges);
-      const updated = await jobsApi.update(projectId, jobId, {
-        irJson: JSON.stringify(ir),
-      });
+      const ctxMap = Object.fromEntries(
+        contextVars.filter((v) => v.key.trim()).map((v) => [v.key, v.value]),
+      );
+      const ir = flowToIR(jobId, nodes, edges, ctxMap);
+      const updated = await jobsApi.update(projectId, jobId, { irJson: JSON.stringify(ir) });
       upsertJob(projectId, updated);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 2000);
     } finally {
       setSaving(false);
     }
   };
+
+  // 자동저장: 로딩 완료 후 nodes/edges/contextVars 변경 시 2초 debounce
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (loading || !projectId || !jobId) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        const ctxMap = Object.fromEntries(
+          contextVars.filter((v) => v.key.trim()).map((v) => [v.key, v.value]),
+        );
+        const ir = flowToIR(jobId, nodes, edges, ctxMap);
+        const updated = await jobsApi.update(projectId, jobId, { irJson: JSON.stringify(ir) });
+        upsertJob(projectId, updated);
+      } catch {}
+    }, 2000);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [nodes, edges, contextVars]);
 
   const handlePublish = async () => {
     if (!projectId || !jobId) return;
@@ -857,13 +883,14 @@ export default function JobDesignerPage() {
             : result.status === "SUCCESS"
               ? "success"
               : "idle";
+          const isLogRow = (n.data as EtlNodeData)?.componentType === "T_LOG_ROW";
           return {
             ...n,
             data: {
               ...(n.data as EtlNodeData),
               status,
-              rowsProcessed: nr?.rowsProcessed,
-              durationMs: nr?.durationMs,
+              rowsProcessed: isLogRow ? undefined : nr?.rowsProcessed,
+              durationMs: isLogRow ? undefined : nr?.durationMs,
             },
           };
         }),
@@ -897,8 +924,22 @@ export default function JobDesignerPage() {
               labelBgBorderRadius: 2,
             };
           }
-          const nr = result.nodeResults[e.source];
-          if (nr?.rowsProcessed !== undefined) {
+          let nr = result.nodeResults[e.source];
+          const sourceNode = nodes.find((n) => n.id === e.source);
+          const targetNode = nodes.find((n) => n.id === e.target);
+          const targetType = (targetNode?.data as EtlNodeData)?.componentType;
+          const sourceType = (sourceNode?.data as EtlNodeData)?.componentType;
+
+          // T_JDBC_OUTPUT으로 들어오는 엣지: 실제 INSERT된 행 수 (output 노드 결과)
+          if (targetType === "T_JDBC_OUTPUT") {
+            nr = result.nodeResults[e.target] ?? nr;
+          }
+          // T_LOG_ROW는 pass-through — 샘플 개수 대신 upstream 노드의 rowsProcessed 사용
+          else if (sourceType === "T_LOG_ROW") {
+            const upstreamEdge = es.find((ed) => ed.target === e.source);
+            if (upstreamEdge) nr = result.nodeResults[upstreamEdge.source] ?? nr;
+          }
+          if (nr?.rowsProcessed !== undefined && nr.rowsProcessed > 0) {
             const isZero = nr.rowsProcessed === 0;
             const jobFailed = result.status === "FAILED";
             const isError = isZero && jobFailed;
@@ -1198,13 +1239,17 @@ export default function JobDesignerPage() {
           <div className="h-4 w-px bg-[#e2e8f0]" />
 
           <Button
-            variant="secondary"
+            variant={savedFlash ? "success" : "secondary"}
             size="sm"
             onClick={handleSave}
             disabled={saving}
           >
             {saving ? (
               <Spinner size="sm" />
+            ) : savedFlash ? (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
             ) : (
               <svg
                 className="w-3.5 h-3.5"
@@ -1220,7 +1265,7 @@ export default function JobDesignerPage() {
                 />
               </svg>
             )}
-            Save
+            {savedFlash ? "Saved" : "Save"}
           </Button>
           <Button
             variant="secondary"
@@ -1281,15 +1326,22 @@ export default function JobDesignerPage() {
       {/* Body */}
       <div className="flex flex-1 min-h-0">
         {/* 좌측 사이드바 */}
-        <div className="relative w-[200px] flex-shrink-0 flex flex-col overflow-visible z-10">
+        <div ref={sidebarRef} className="relative w-[200px] flex-shrink-0 flex flex-col overflow-visible z-10">
           <ComponentPalette
             onDragStart={(type, label) => setDragType({ type, label })}
             showContextPanel={showContextPanel}
-            onToggleContextPanel={() => setShowContextPanel((p) => !p)}
+            onToggleContextPanel={(btnEl) => {
+              if (sidebarRef.current) {
+                const btnRect = btnEl.getBoundingClientRect();
+                const sidebarRect = sidebarRef.current.getBoundingClientRect();
+                setContextPanelTop(btnRect.top - sidebarRect.top);
+              }
+              setShowContextPanel((p) => !p);
+            }}
             varsCount={contextVars.filter((v) => v.key.trim()).length}
           />
           {showContextPanel && (
-            <div className="absolute top-0 left-full ml-1 z-50">
+            <div className="absolute left-full ml-1 z-50" style={{ top: contextPanelTop }}>
               <ContextVarsPanel
                 vars={contextVars}
                 onChange={setContextVars}

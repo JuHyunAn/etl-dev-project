@@ -62,6 +62,10 @@
 - **Java**: `~/.vscode/extensions/redhat.java-1.53.0-win32-x64/jre/21.0.10-win32-x86_64`
 - **Gradle**: `~/.gradle/wrapper/dists/gradle-8.14-all/c2qonpi39x1mddn7hk5gh9iqj/gradle-8.14/bin/gradle`
 
+### 실행 방법
+cd C:\Users\안주현\Desktop\ETL_Platform\backend > .\gradlew.bat bootRun --no-daemon
+cd C:\Users\안주현\Desktop\ETL_Platform\frontend > npm run dev
+
 ### 주요 라이브러리
 - React Flow v12 (노드 에디터)
 - Tailwind CSS (스타일링)

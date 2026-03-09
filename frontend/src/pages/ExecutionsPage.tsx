@@ -31,7 +31,7 @@ export default function ExecutionsPage() {
       >
         <div className="max-w-5xl mx-auto">
           <h1 className="text-xl font-bold" style={{ color: "#0f172a" }}>
-            Runs
+          Run history
           </h1>
           <p className="text-sm mt-0.5" style={{ color: "#64748b" }}>
             Execution history
