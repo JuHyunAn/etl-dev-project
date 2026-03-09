@@ -569,9 +569,16 @@ function SystemLoginModal({ onClose }: { onClose: () => void }) {
 
 // ── 메인 LoginPage ─────────────────────────────────────────────
 export default function LoginPage() {
-  const { loginAsGuest } = useAuth();
+  const { loginAsGuest, user, loading } = useAuth();
   const navigate = useNavigate();
   const [modalOpen, setModalOpen] = useState(false);
+
+  // 이미 로그인된 경우 메인으로 리다이렉트
+  useEffect(() => {
+    if (!loading && user) {
+      navigate('/', { replace: true });
+    }
+  }, [user, loading]);
 
   const handleGuest = () => {
     loginAsGuest();

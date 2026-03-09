@@ -48,12 +48,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         { withCredentials: true }
       )
       const { accessToken, user } = res.data
+      // setAuth()가 이미 호출된 경우(OAuth2 콜백 등) 덮어쓰지 않음
+      if (tokenRef.current) return true
       tokenRef.current = accessToken
       setState({ user, accessToken, loading: false })
       scheduleRefresh(15)
       return true
     } catch {
-      tokenRef.current = null
+      // setAuth()가 이미 호출된 경우 로그아웃 상태로 되돌리지 않음
+      if (tokenRef.current) return true
       setState({ user: null, accessToken: null, loading: false })
       return false
     }

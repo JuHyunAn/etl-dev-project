@@ -13,7 +13,7 @@ export function registerAuthHandlers(
 }
 
 const client = axios.create({
-  baseURL: 'http://localhost:8080',
+  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8080',
   headers: { 'Content-Type': 'application/json' },
   timeout: 30000,
   withCredentials: true,
@@ -38,6 +38,11 @@ client.interceptors.response.use(
     const originalRequest = err.config
 
     if (err.response?.status === 401 && !originalRequest._retry) {
+      // 토큰 없음(게스트/비로그인) → refresh 시도 안 함
+      if (!getTokenFn?.()) {
+        const msg = err.response?.data?.message || err.response?.data || err.message
+        return Promise.reject(new Error(typeof msg === 'string' ? msg : JSON.stringify(msg)))
+      }
       if (isRefreshing) {
         // 이미 refresh 중이면 대기
         return new Promise((resolve, reject) => {
