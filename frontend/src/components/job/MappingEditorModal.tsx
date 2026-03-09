@@ -235,19 +235,18 @@ export default function MappingEditorModal({
     if (targetColumnMap.size > 0) {
       // 타겟 컬럼 순서 기준으로 행 생성
       // 소스에 매칭되는 컬럼은 자동 매핑, 없는 컬럼은 빈 행 추가
-      const mappedSourceCols = new Set<string>();
+      const ts = Date.now();
       const auto: MappingRow[] = Array.from(targetColumnMap.entries()).map(
-        ([targetCol, targetType]) => {
+        ([targetCol, targetType], idx) => {
           const matched = allSourceCols.find(
             ({ col }) => col.columnName.toLowerCase() === targetCol,
           );
           if (matched) {
-            mappedSourceCols.add(targetCol);
             return buildAutoMappings(matched.nodeId, [matched.col], targetColumnMap)[0];
           }
           // 소스에 없는 타겟 컬럼 → 빈 행
           return {
-            id: `auto-empty-${targetCol}-${Date.now()}`,
+            id: `auto-empty-${targetCol}-${ts}-${idx}`,
             sourceNodeId: "",
             sourceColumn: "",
             targetName: targetCol,

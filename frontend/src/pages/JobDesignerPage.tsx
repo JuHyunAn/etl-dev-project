@@ -332,6 +332,10 @@ function ContextVarsPanel({
   );
 }
 
+function buildCtxMap(contextVars: { key: string; value: string }[]): Record<string, string> {
+  return Object.fromEntries(contextVars.filter((v) => v.key.trim()).map((v) => [v.key.trim(), v.value]));
+}
+
 export default function JobDesignerPage() {
   const { projectId, jobId } = useParams<{
     projectId: string;
@@ -779,9 +783,7 @@ export default function JobDesignerPage() {
     if (!projectId || !jobId) return;
     setSaving(true);
     try {
-      const ctxMap = Object.fromEntries(
-        contextVars.filter((v) => v.key.trim()).map((v) => [v.key, v.value]),
-      );
+      const ctxMap = buildCtxMap(contextVars);
       const ir = flowToIR(jobId, nodes, edges, ctxMap);
       const updated = await jobsApi.update(projectId, jobId, { irJson: JSON.stringify(ir) });
       upsertJob(projectId, updated);
@@ -799,9 +801,7 @@ export default function JobDesignerPage() {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
       try {
-        const ctxMap = Object.fromEntries(
-          contextVars.filter((v) => v.key.trim()).map((v) => [v.key, v.value]),
-        );
+        const ctxMap = buildCtxMap(contextVars);
         const ir = flowToIR(jobId, nodes, edges, ctxMap);
         const updated = await jobsApi.update(projectId, jobId, { irJson: JSON.stringify(ir) });
         upsertJob(projectId, updated);
@@ -810,7 +810,7 @@ export default function JobDesignerPage() {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [nodes, edges, contextVars]);
+  }, [nodes, edges, contextVars, projectId, jobId]);
 
   const handlePublish = async () => {
     if (!projectId || !jobId) return;
@@ -859,11 +859,7 @@ export default function JobDesignerPage() {
     );
 
     try {
-      const ctxMap = Object.fromEntries(
-        contextVars
-          .filter((v) => v.key.trim())
-          .map((v) => [v.key.trim(), v.value]),
-      );
+      const ctxMap = buildCtxMap(contextVars);
       const ir = flowToIR(jobId, nodes, edges, ctxMap);
       await jobsApi.update(projectId!, jobId, { irJson: JSON.stringify(ir) });
 
