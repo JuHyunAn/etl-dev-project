@@ -145,6 +145,106 @@ export interface ExecutionResult {
   logs: string[]
 }
 
+export interface ExecutionSummary {
+  id: string
+  jobId: string
+  jobName: string
+  jobVersion: string
+  status: ExecutionStatus
+  previewMode: boolean
+  startedAt: string
+  finishedAt?: string
+  durationMs?: number
+  errorMessage?: string
+  triggeredBy: string
+}
+
+// ── Schedule ───────────────────────────────────────────────────
+
+export interface ScheduleStep {
+  id: string
+  scheduleId: string
+  jobId: string
+  stepOrder: number
+  dependsOnStepId?: string
+  runCondition: 'ON_SUCCESS' | 'ON_FAILURE' | 'ON_COMPLETE'
+  timeoutSeconds: number
+  retryCount: number
+  retryDelaySeconds: number
+  contextOverrides: string
+  enabled: boolean
+}
+
+export interface ScheduleExecutionSummary {
+  id: string
+  scheduleId: string
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED' | 'PARTIAL' | 'CANCELLED'
+  startedAt: string
+  finishedAt?: string
+  totalSteps?: number
+  completedSteps: number
+  failedSteps: number
+  skippedSteps: number
+  triggerType: 'CRON' | 'MANUAL' | 'API' | 'RETRY'
+  errorSummary?: string
+}
+
+export interface StepExecution {
+  id: string
+  scheduleStepId: string
+  executionId?: string
+  jobId: string
+  stepOrder: number
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED'
+  startedAt?: string
+  finishedAt?: string
+  retryAttempt: number
+  errorMessage?: string
+}
+
+export interface ScheduleExecutionDetail extends ScheduleExecutionSummary {
+  stepExecutions: StepExecution[]
+}
+
+export interface Schedule {
+  id: string
+  name: string
+  description?: string
+  cronExpression: string
+  timezone: string
+  enabled: boolean
+  lastFiredAt?: string
+  nextFireAt?: string
+  consecutiveFailures: number
+  alertOnFailure: boolean
+  alertChannel?: string
+  createdBy?: string
+  createdAt: string
+  updatedAt: string
+  steps: ScheduleStep[]
+  recentExecutions: ScheduleExecutionSummary[]
+}
+
+export interface ScheduleCreateRequest {
+  name: string
+  description?: string
+  cronExpression: string
+  timezone?: string
+  enabled?: boolean
+  alertOnFailure?: boolean
+  alertChannel?: string
+  steps: {
+    jobId: string
+    stepOrder?: number
+    dependsOnStepId?: string
+    runCondition?: string
+    timeoutSeconds?: number
+    retryCount?: number
+    retryDelaySeconds?: number
+    contextOverrides?: string
+  }[]
+}
+
 export interface TableInfo {
   schemaName: string
   tableName: string

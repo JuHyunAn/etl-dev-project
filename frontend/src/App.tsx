@@ -9,6 +9,7 @@ import ProjectsPage from './pages/ProjectsPage'
 import ProjectDetailPage from './pages/ProjectDetailPage'
 import JobDesignerPage from './pages/JobDesignerPage'
 import ExecutionsPage from './pages/ExecutionsPage'
+import SchedulesPage from './pages/SchedulesPage'
 import LoginPage from './pages/LoginPage'
 import AuthCallbackPage from './pages/AuthCallbackPage'
 
@@ -55,6 +56,7 @@ export default function App() {
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
             <Route path="/executions" element={<ExecutionsPage />} />
+            <Route path="/schedules" element={<SchedulesPage />} />
           </Route>
 
           {/* Job Designer — full screen */}

@@ -1,6 +1,6 @@
 # ETL Platform - Work History & Reference
 
-> 최종 업데이트: 2026-03-08
+> 최종 업데이트: 2026-03-10
 
 ---
 
@@ -103,6 +103,7 @@ ETL_Platform/
 │       │   ├── EtlPlatformApplication.kt
 │       │   ├── config/
 │       │   │   ├── CorsConfig.kt           # CORS 설정 (localhost:3000,3001 허용)
+│       │   │   ├── QuartzConfig.kt         # SpringBeanJobFactory + SchedulerFactoryBean
 │       │   │   └── GlobalExceptionHandler.kt
 │       │   ├── domain/
 │       │   │   ├── connection/             # DB 커넥션 CRUD + 암호화
@@ -119,6 +120,14 @@ ETL_Platform/
 │       │   │   ├── ExecutionModels.kt
 │       │   │   ├── ExecutionService.kt
 │       │   │   └── SqlPushdownAdapter.kt   # SQL Pushdown 실행기
+│       │   ├── schedule/                   # 스케줄링 (Quartz)
+│       │   │   ├── Schedule.kt             # 4개 JPA 엔티티
+│       │   │   ├── ScheduleRepository.kt   # 4개 리포지토리
+│       │   │   ├── ScheduleService.kt      # CRUD + Quartz 동기화 + DTOs
+│       │   │   ├── ScheduleController.kt   # REST API
+│       │   │   ├── ScheduleExecutionService.kt  # 오케스트레이션 엔진
+│       │   │   ├── ScheduleTriggerJob.kt   # Quartz Job 구현체
+│       │   │   └── ScheduleStartupLoader.kt     # 재시작 시 Quartz 재등록
 │       │   ├── ir/
 │       │   │   └── JobIR.kt               # IR 데이터 모델
 │       │   └── schema/
@@ -130,7 +139,10 @@ ETL_Platform/
 │           └── db/migration/
 │               ├── V1__create_connections.sql
 │               ├── V2__create_projects_and_jobs.sql
-│               └── V3__create_executions.sql
+│               ├── V3__create_executions.sql
+│               ├── V4__add_auth_fields.sql
+│               ├── V5__add_execution_fields.sql
+│               └── V6__create_schedules.sql
 │
 └── frontend/                         # React + Vite + TypeScript
     ├── package.json
@@ -170,8 +182,9 @@ ETL_Platform/
             ├── ConnectionsPage.tsx
             ├── ProjectsPage.tsx
             ├── ProjectDetailPage.tsx
-            ├── JobDesignerPage.tsx        # 메인 캔버스 페이지
-            └── ExecutionsPage.tsx
+            ├── JobDesignerPage.tsx        # 메인 캔버스 페이지 (Schedule 탭 포함)
+            ├── ExecutionsPage.tsx
+            └── SchedulesPage.tsx          # 스케줄 관리 페이지
 ```
 
 ---
@@ -235,9 +248,26 @@ ETL_Platform/
 
 ### Execution API
 
-| Method | URL                     | 설명    |
-| ------ | ----------------------- | ------- |
-| POST   | `/api/jobs/{jobId}/run` | 잡 실행 |
+| Method | URL                                | 설명                    |
+| ------ | ---------------------------------- | ----------------------- |
+| POST   | `/api/jobs/{jobId}/run`            | 잡 실행                 |
+| GET    | `/api/executions`                  | 전체 실행 이력 (페이징) |
+| GET    | `/api/jobs/{jobId}/executions`     | 잡별 실행 이력          |
+| GET    | `/api/executions/{id}`             | 실행 상세               |
+
+### Schedule API
+
+| Method | URL                                      | 설명                          |
+| ------ | ---------------------------------------- | ----------------------------- |
+| GET    | `/api/schedules`                         | 스케줄 목록 (최신순)          |
+| GET    | `/api/schedules/{id}`                    | 스케줄 상세                   |
+| POST   | `/api/schedules`                         | 스케줄 생성                   |
+| PUT    | `/api/schedules/{id}`                    | 스케줄 수정                   |
+| DELETE | `/api/schedules/{id}`                    | 스케줄 삭제                   |
+| PATCH  | `/api/schedules/{id}/enabled?enabled=`   | 스케줄 활성/비활성 토글       |
+| POST   | `/api/schedules/{id}/trigger`            | 수동 즉시 트리거              |
+| GET    | `/api/schedules/{id}/executions`         | 스케줄 실행 이력              |
+| GET    | `/api/schedules/by-job/{jobId}`          | 특정 Job이 포함된 스케줄 목록 |
 
 ### AI Agent (프론트엔드 직접 호출 - 백엔드 경유 없음)
 
@@ -460,7 +490,37 @@ ETL_Platform/
 
 ### 6-6. 실행 이력
 
-- 마지막 실행 결과 표시 (ExecutionsPage)
+- DB 저장: 실행 시작 시 RUNNING 저장, 완료 후 SUCCESS/FAILED 업데이트
+- ExecutionsPage: 전체 실행 목록 테이블 (페이지네이션), 클릭 시 상세 펼치기
+- 노드별 처리 행수·소요시간, 에러 메시지 포함
+
+### 6-7. 스케줄링
+
+#### 백엔드 (Quartz 기반)
+
+- **DB 스키마**: `schedules`, `schedule_steps`, `schedule_executions`, `schedule_step_executions` 4개 테이블 (V6 Flyway)
+- **Quartz 설정**: `SpringBeanJobFactory`로 Spring DI를 Quartz Job에 주입, RAMJobStore 사용
+- **재시작 복구**: `ScheduleStartupLoader`(ApplicationRunner) — 서버 재시작 시 enabled 스케줄 전체 Quartz 재등록
+- **실행 아키텍처**:
+  - Quartz(ScheduleTriggerJob): 크론 타이머 역할만 — `ScheduleExecutionService.trigger()` 호출
+  - ScheduleExecutionService: step 순서 오케스트레이션, depends_on_step_id DAG 의존관계 체크, ON_SUCCESS/FAILURE/COMPLETE 조건 분기, retry 로직, 최종 상태(SUCCESS/PARTIAL/FAILED) 집계
+- **CRUD + Quartz 동기화**: ScheduleService — 생성/수정/삭제 시 Quartz job/trigger 자동 동기화
+
+#### 프론트엔드 SchedulesPage
+
+- **목록 뷰** (Airflow 스타일): 스케줄 카드, step 수 표시, 상태 도트, 다음 실행 시각, 활성 스케줄 수 통계
+- **Pipeline 탭**: SVG 기반 DAG 시각화 — depends_on_step_id 화살표, ON_SUCCESS(초록)/ON_FAILURE(빨강 점선)/ON_COMPLETE(회색) 색상
+- **실행 이력 탭**: GitHub Actions 스타일, 첫번째 실행 자동 오픈, step 세로선 연결
+- **Settings 탭**: 이름/설명/cron/timezone/step 편집, 저장 완료 피드백
+- **신규 스케줄 모달**: cron 프리셋, step 빌더(Job 선택 + runCondition 설정)
+- **헤더 액션**: enable/disable 토글, 즉시 실행(trigger), 삭제
+
+#### Job Designer Schedule 탭
+
+- BottomPanel에 `"schedule"` 탭 추가 (호박색 `#f59e0b` 테마)
+- `SchedulePanel` 컴포넌트: 현재 Job이 포함된 스케줄 목록 + 최근 실행 상태 도트
+- `+ Quick Schedule` 버튼: 이름 + cron 프리셋으로 단일 Job 스케줄 즉시 생성
+- `스케줄러 탭 →` 버튼: `/schedules` 페이지로 이동
 
 ---
 
@@ -545,8 +605,10 @@ Job은 `ir_json` (JSONB)으로 저장됨.
 
 - [ ] T_FILE_INPUT / T_FILE_OUTPUT 구현
 - [ ] SQL Pushdown 실행 엔진 완성 (SqlPushdownAdapter 로직)
-- [ ] 잡 스케줄링 (cron 기반 자동 실행)
-- [ ] 실행 이력 목록 페이지 (현재 마지막 실행만 표시)
+- [x] 잡 스케줄링 백엔드 (Quartz 기반 - 2단계 완료)
+- [x] 실행 이력 목록 페이지 (DB 저장 + 페이지네이션 - 1단계 완료)
+- [x] 스케줄러 프론트엔드 탭 SchedulesPage (3단계 완료)
+- [x] Job Designer Quick Schedule 패널 (3단계 완료)
 - [ ] 사용자 인증/권한 관리
 - [ ] 데이터 프리뷰 (100행 미리보기 결과 표시)
 - [ ] T_MAP Expression 유효성 검사
@@ -787,3 +849,54 @@ Job은 `ir_json` (JSONB)으로 저장됨.
 - **기능**: T_LOG_ROW 컴포넌트가 실제 데이터 행을 캡처하여 "Row Logs" 탭에 표시
 - **구현**: `executeLogRowNode()` — BFS로 상위 Input 노드 탐색 → LIMIT 100 샘플 쿼리 실행 → LogRowData(columns, rows)
 - **UI**: 하단 패널에 "Row Logs" 탭 추가, 다중 LOG_ROW 노드 간 탭 전환 지원
+
+### 2026-03-10
+
+#### 스케줄링 1단계 - 실행 이력 저장
+
+- **`Execution.kt`**: JPA 엔티티 (executions 테이블 매핑), `@JdbcTypeCode(SqlTypes.ARRAY)` for TEXT[], `@JdbcTypeCode(SqlTypes.JSON)` for JSONB
+- **`ExecutionRepository.kt`**: `findAllByOrderByStartedAtDesc(Pageable)`, `findByJobIdOrderByStartedAtDesc(UUID)`
+- **`ExecutionService.kt`**: 실행 시작 시 RUNNING 저장 → 완료 후 최종 상태 업데이트, `listAll()`, `listByJob()`, `getDetail()` 추가
+- **`ExecutionController.kt`**: `GET /api/executions`, `GET /api/jobs/{jobId}/executions`, `GET /api/executions/{id}` 엔드포인트 추가
+- **`ExecutionsPage.tsx`**: DB에서 이력 조회, 페이지네이션 테이블, 클릭 시 상세 펼치기
+
+#### 스케줄링 2단계 - 스케줄링 백엔드 (Quartz)
+
+- **`build.gradle.kts`**: `spring-boot-starter-quartz` 의존성 추가
+- **`V6__create_schedules.sql`**: schedules, schedule_steps, schedule_executions, schedule_step_executions 테이블 생성
+- **`Schedule.kt`**: 4개 JPA 엔티티 (Schedule, ScheduleStep, ScheduleExecution, ScheduleStepExecution)
+- **`ScheduleRepository.kt`**: 4개 리포지토리
+- **`ScheduleTriggerJob.kt`**: Quartz Job — scheduleId를 받아 `ScheduleExecutionService.trigger()` 호출만 담당 (트리거 역할만)
+- **`ScheduleExecutionService.kt`**: step 순서 오케스트레이션, 의존 관계(depends_on_step_id) 체크, retry 로직, 최종 상태(SUCCESS/PARTIAL/FAILED) 집계
+- **`ScheduleService.kt`**: CRUD + Quartz 동기화 (`syncToQuartz`, `removeFromQuartz`), DTO 변환, `triggerManual()`, `listExecutions()`
+- **`ScheduleController.kt`**: `GET/POST /api/schedules`, `GET/PUT/DELETE /api/schedules/{id}`, `PATCH /api/schedules/{id}/enabled`, `POST /api/schedules/{id}/trigger`, `GET /api/schedules/{id}/executions`
+- **`QuartzConfig.kt`**: `SpringBeanJobFactory` 설정 (Spring DI를 Quartz Job에 주입), `SchedulerFactoryBean` 등록
+
+**아키텍처 원칙**
+- Quartz는 "언제 트리거할 것인가"만 담당 (RAMJobStore 사용 — 재시작 시 DB에서 enabled 스케줄 재등록 필요)
+- 실행 오케스트레이션·이력 관리·상태 추적은 ScheduleExecutionService에서 담당
+- 기존 `ExecutionService.execute()`를 그대로 재사용 (triggeredBy = "schedule:{scheduleId}")
+
+#### 스케줄링 3단계 - 프론트엔드 + UX 완성
+
+**Backend 추가 (Startup Recovery)**
+- **`ScheduleStartupLoader.kt`**: `ApplicationRunner` 구현, 서버 재시작 시 DB의 enabled 스케줄 전체를 Quartz에 재등록
+- **`ScheduleService.kt`**: `reloadQuartz(schedule)` public 메서드 추가, `listByJobId(jobId)` 메서드 추가
+- **`ScheduleController.kt`**: `GET /api/schedules/by-job/{jobId}` 엔드포인트 추가
+
+**Frontend SchedulesPage 전면 개선**
+- **Pipeline 탭**: SVG 기반 DAG 시각화 — 의존 관계(depends_on_step_id) 화살표 표시, ON_SUCCESS(초록)/ON_FAILURE(빨강)/ON_COMPLETE(회색) 색상 구분, 분기 경로 곡선 패스
+- **실행 이력 탭**: 첫번째 실행 자동 오픈, step 세로선 연결, 에러 요약 표시
+- **Settings 탭 (신규)**: 이름/설명/cron/timezone/step 편집, 저장 완료 피드백 ("✓ 저장됨")
+- **목록 패널**: step 수 표시, 활성 스케줄 수 헤더 통계, Airflow 스타일 상태 도트
+
+**Frontend Job Designer Schedule 탭 (신규)**
+- `BottomPanel` 타입에 `"schedule"` 추가 (호박색 `#f59e0b` 테마)
+- `SchedulePanel` 컴포넌트 (파일 하단):
+  - 이 Job이 포함된 스케줄 목록 표시 (최근 실행 상태 도트)
+  - `+ Quick Schedule` 버튼: 이름 + cron 프리셋으로 즉시 단일 Job 스케줄 생성
+  - `스케줄러 탭 →` 버튼: `/schedules` 페이지로 이동
+  - 다크 테마 (하단 패널 스타일 유지: `#21262d`, `#161b22`)
+
+**API 추가**
+- `schedulesApi.listByJob(jobId)` — `GET /api/schedules/by-job/{jobId}`

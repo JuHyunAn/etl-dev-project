@@ -21,7 +21,7 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { jobsApi, executionApi, connectionsApi } from "../api";
+import { jobsApi, executionApi, connectionsApi, schedulesApi } from "../api";
 import { useAppStore } from "../stores";
 import { Badge, Button, Spinner } from "../components/ui";
 import ComponentPalette from "../components/job/ComponentPalette";
@@ -36,12 +36,13 @@ import type {
   JobIR,
   ExecutionResult,
   ColumnInfo,
+  Schedule,
 } from "../types";
 import type { AiGraphSpec, AiPatchSpec } from "../api/ai";
 import { buildAutoMappings } from "../utils/mapping";
 import Editor from "@monaco-editor/react";
 
-type BottomPanel = "sql" | "logs" | "rowlogs" | "summary" | null;
+type BottomPanel = "sql" | "logs" | "rowlogs" | "summary" | "schedule" | null;
 
 type EtlNodeData = {
   label: string;
@@ -69,10 +70,10 @@ function irToFlow(ir: JobIR): { nodes: Node[]; edges: Edge[] } {
     const style = isTrigger
       ? {
           stroke: isOnError ? "#dc2626" : "#16a34a",
-          strokeWidth: 2,
+          strokeWidth: 1.5,
           strokeDasharray: "6 3",
         }
-      : { stroke: "#2563eb", strokeWidth: 2 };
+      : { stroke: "#94a3b8", strokeWidth: 1.5 };
     const label = isTrigger ? (isOnError ? "err" : "ok") : undefined;
     return {
       id: e.id,
@@ -461,7 +462,7 @@ export default function JobDesignerPage() {
           {
             ...params,
             animated: false,
-            style: { stroke: "#2563eb", strokeWidth: 2 },
+            type: "smoothstep", style: { stroke: "#94a3b8", strokeWidth: 1.5 },
           },
           eds,
         ),
@@ -477,8 +478,8 @@ export default function JobDesignerPage() {
           const cond = pendingTrigger.condition;
           const style =
             cond === "ON_OK"
-              ? { stroke: "#16a34a", strokeWidth: 2, strokeDasharray: "6 3" }
-              : { stroke: "#dc2626", strokeWidth: 2, strokeDasharray: "6 3" };
+              ? { stroke: "#16a34a", strokeWidth: 1.5, strokeDasharray: "6 3" }
+              : { stroke: "#dc2626", strokeWidth: 1.5, strokeDasharray: "6 3" };
           setEdges((eds) => [
             ...eds,
             {
@@ -605,7 +606,7 @@ export default function JobDesignerPage() {
           source: newNodes[e.source]?.id ?? "",
           target: newNodes[e.target]?.id ?? "",
           animated: false,
-          style: { stroke: "#2563eb", strokeWidth: 2 },
+          type: "smoothstep", style: { stroke: "#94a3b8", strokeWidth: 1.5 },
         }))
         .filter((e) => e.source && e.target);
 
@@ -853,7 +854,7 @@ export default function JobDesignerPage() {
                 strokeWidth: 2,
                 strokeDasharray: "6 3",
               }
-            : { stroke: "#2563eb", strokeWidth: 2 },
+            : { stroke: "#2563eb", strokeWidth: 1.5 },
         };
       }),
     );
@@ -906,7 +907,7 @@ export default function JobDesignerPage() {
               animated: false,
               style: {
                 stroke: isOnError ? "#dc2626" : "#16a34a",
-                strokeWidth: 2,
+                strokeWidth: 1.5,
                 strokeDasharray: "6 3",
               },
               label: isOnError ? "err" : "ok",
@@ -946,7 +947,7 @@ export default function JobDesignerPage() {
             return {
               ...e,
               animated: false,
-              style: { stroke: color, strokeWidth: 2 },
+              style: { stroke: color, strokeWidth: 1.5 },
               label: rowLabel,
               labelStyle: {
                 fill: color,
@@ -963,7 +964,7 @@ export default function JobDesignerPage() {
           return {
             ...e,
             animated: false,
-            style: { stroke: color, strokeWidth: 2 },
+            style: { stroke: color, strokeWidth: 1.5 },
           };
         }),
       );
@@ -1005,7 +1006,7 @@ export default function JobDesignerPage() {
                   strokeWidth: 2,
                   strokeDasharray: "6 3",
                 }
-              : { stroke: "#f85149", strokeWidth: 2 },
+              : { stroke: "#f85149", strokeWidth: 1.5 },
           };
         }),
       );
@@ -1231,6 +1232,28 @@ export default function JobDesignerPage() {
             </svg>
             Summary
           </Button>
+          <Button
+            variant={bottomPanel === "schedule" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() =>
+              setBottomPanel((p) => (p === "schedule" ? null : "schedule"))
+            }
+          >
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            Schedule
+          </Button>
 
           <div className="h-4 w-px bg-[#e2e8f0]" />
 
@@ -1377,7 +1400,8 @@ export default function JobDesignerPage() {
               deleteKeyCode={["Delete", "Backspace"]}
               style={{ background: "transparent" }}
               defaultEdgeOptions={{
-                style: { stroke: "#2563eb", strokeWidth: 2 },
+                type: "smoothstep",
+                style: { stroke: "#94a3b8", strokeWidth: 1.5 },
               }}
             >
               <Controls />
@@ -1678,6 +1702,17 @@ export default function JobDesignerPage() {
                     }`}
                 >
                   Job Summary
+                </button>
+                <button
+                  onClick={() => setBottomPanel("schedule")}
+                  className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
+                    ${
+                      bottomPanel === "schedule"
+                        ? "border-[#f59e0b] text-[#f59e0b]"
+                        : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
+                    }`}
+                >
+                  Schedule
                 </button>
                 <button
                   onClick={() => setBottomPanel(null)}
@@ -2040,6 +2075,10 @@ export default function JobDesignerPage() {
                     </div>
                   );
                 })()}
+
+              {bottomPanel === "schedule" && (
+                <SchedulePanel jobId={jobId ?? ""} />
+              )}
             </div>
           )}
         </div>
@@ -2259,6 +2298,179 @@ export default function JobDesignerPage() {
           }}
           onClose={() => setMappingTarget(null)}
         />
+      )}
+    </div>
+  );
+}
+
+// ─── Schedule 탭 패널 (Job Designer 하단) ────────────────────────────────────
+function SchedulePanel({ jobId }: { jobId: string }) {
+  const navigate = useNavigate();
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showQuickModal, setShowQuickModal] = useState(false);
+  const [quickCron, setQuickCron] = useState("0 6 * * *");
+  const [quickName, setQuickName] = useState("");
+  const [quickEnabled, setQuickEnabled] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const QUICK_PRESETS = [
+    { label: "매 시간", value: "0 * * * *" },
+    { label: "매일 06:00", value: "0 6 * * *" },
+    { label: "매일 자정", value: "0 0 * * *" },
+    { label: "매주 월", value: "0 0 * * 1" },
+  ];
+
+  useEffect(() => {
+    if (!jobId) return;
+    setLoading(true);
+    schedulesApi.listByJob(jobId).then(setSchedules).catch(() => setSchedules([])).finally(() => setLoading(false));
+  }, [jobId]);
+
+  const handleQuickCreate = async () => {
+    if (!quickName.trim() || !quickCron.trim()) return;
+    setSaving(true);
+    try {
+      await schedulesApi.create({
+        name: quickName.trim(),
+        cronExpression: quickCron,
+        timezone: "Asia/Seoul",
+        enabled: quickEnabled,
+        steps: [{ jobId, stepOrder: 1, runCondition: "ON_SUCCESS" }],
+      });
+      const updated = await schedulesApi.listByJob(jobId).catch(() => []);
+      setSchedules(updated);
+      setShowQuickModal(false);
+      setQuickName("");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const STATUS_COLOR: Record<string, string> = {
+    SUCCESS: "#3fb950", FAILED: "#f85149", RUNNING: "#58a6ff",
+    PARTIAL: "#f0883e", CANCELLED: "#8b949e",
+  };
+
+  return (
+    <div className="h-full overflow-y-auto px-4 py-3" style={{ color: "#c9d1d9" }}>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#8b949e" }}>
+          이 Job의 스케줄 ({schedules.length})
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowQuickModal(true)}
+            className="text-xs px-2.5 py-1 rounded"
+            style={{ background: "#21262d", border: "1px solid #30363d", color: "#f0883e" }}
+          >
+            + Quick Schedule
+          </button>
+          <button
+            onClick={() => navigate("/schedules")}
+            className="text-xs px-2.5 py-1 rounded"
+            style={{ background: "#21262d", border: "1px solid #30363d", color: "#58a6ff" }}
+          >
+            스케줄러 탭 →
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-6"><Spinner size="sm" /></div>
+      ) : schedules.length === 0 ? (
+        <div className="flex flex-col items-center py-6 gap-2" style={{ color: "#484f58" }}>
+          <p className="text-xs">이 Job이 포함된 스케줄이 없습니다.</p>
+          <button
+            onClick={() => setShowQuickModal(true)}
+            className="text-xs px-3 py-1.5 rounded"
+            style={{ background: "#21262d", border: "1px solid #f0883e", color: "#f0883e" }}
+          >
+            + Quick Schedule 생성
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {schedules.map((sch) => (
+            <div key={sch.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg"
+              style={{ background: "#21262d", border: "1px solid #30363d" }}>
+              <span className="w-2 h-2 rounded-full flex-shrink-0"
+                style={{ background: sch.enabled ? "#3fb950" : "#484f58" }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium truncate" style={{ color: "#e6edf3" }}>{sch.name}</p>
+                <p className="text-[10px] font-mono" style={{ color: "#484f58" }}>{sch.cronExpression}</p>
+              </div>
+              {sch.recentExecutions.length > 0 && (
+                <div className="flex gap-1">
+                  {sch.recentExecutions.slice().reverse().slice(0, 5).map((e) => (
+                    <span key={e.id} className="w-2 h-2 rounded-full"
+                      style={{ background: STATUS_COLOR[e.status] ?? "#484f58" }} />
+                  ))}
+                </div>
+              )}
+              <button
+                onClick={() => navigate("/schedules")}
+                className="text-[10px]"
+                style={{ color: "#58a6ff" }}
+              >
+                →
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Quick Schedule 모달 */}
+      {showQuickModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.6)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowQuickModal(false); }}>
+          <div className="w-80 rounded-xl shadow-2xl"
+            style={{ background: "#161b22", border: "1px solid #30363d" }}>
+            <div className="flex items-center justify-between px-4 py-3"
+              style={{ borderBottom: "1px solid #30363d" }}>
+              <p className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Quick Schedule</p>
+              <button onClick={() => setShowQuickModal(false)} style={{ color: "#484f58" }}>✕</button>
+            </div>
+            <div className="px-4 py-3 space-y-3">
+              <div>
+                <label className="text-xs block mb-1" style={{ color: "#8b949e" }}>스케줄 이름</label>
+                <input value={quickName} onChange={(e) => setQuickName(e.target.value)}
+                  placeholder="Daily run"
+                  className="w-full px-3 py-2 rounded-lg text-xs outline-none"
+                  style={{ background: "#21262d", border: "1px solid #30363d", color: "#e6edf3" }} />
+              </div>
+              <div>
+                <label className="text-xs block mb-1.5" style={{ color: "#8b949e" }}>실행 주기</label>
+                <div className="flex gap-1.5 flex-wrap mb-2">
+                  {QUICK_PRESETS.map((p) => (
+                    <button key={p.value} onClick={() => setQuickCron(p.value)}
+                      className="px-2 py-0.5 rounded text-[10px]"
+                      style={{ border: "1px solid #30363d", background: quickCron === p.value ? "#1f2d45" : "#21262d", color: quickCron === p.value ? "#58a6ff" : "#8b949e" }}>
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+                <input value={quickCron} onChange={(e) => setQuickCron(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg text-xs font-mono outline-none"
+                  style={{ background: "#21262d", border: "1px solid #30363d", color: "#e6edf3" }} />
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={quickEnabled} onChange={(e) => setQuickEnabled(e.target.checked)} />
+                <span className="text-xs" style={{ color: "#8b949e" }}>즉시 활성화</span>
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 px-4 py-3" style={{ borderTop: "1px solid #30363d" }}>
+              <button onClick={() => setShowQuickModal(false)} className="text-xs px-3 py-1.5 rounded"
+                style={{ border: "1px solid #30363d", color: "#8b949e" }}>취소</button>
+              <button onClick={handleQuickCreate} disabled={saving || !quickName.trim()}
+                className="text-xs px-3 py-1.5 rounded disabled:opacity-40"
+                style={{ background: "#f0883e", color: "#ffffff" }}>
+                {saving ? "생성 중..." : "생성"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

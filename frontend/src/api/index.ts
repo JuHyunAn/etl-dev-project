@@ -1,7 +1,8 @@
 import client from './client'
 import type {
   Connection, ConnectionCreateRequest, ConnectionTestResult,
-  Project, Job, ExecutionResult, TableInfo, ColumnInfo
+  Project, Job, ExecutionResult, ExecutionSummary, TableInfo, ColumnInfo,
+  Schedule, ScheduleCreateRequest, ScheduleExecutionDetail
 } from '../types'
 
 // ── Connections ──────────────────────────────────────────────
@@ -62,4 +63,34 @@ export const executionApi = {
       context: context ?? {},
       previewMode: previewMode ?? false,
     }).then(r => r.data),
+
+  listAll: (page = 0, size = 20) =>
+    client.get<{ content: ExecutionSummary[]; totalElements: number; totalPages: number }>(
+      '/api/executions', { params: { page, size } }
+    ).then(r => r.data),
+
+  listByJob: (jobId: string) =>
+    client.get<ExecutionSummary[]>(`/api/jobs/${jobId}/executions`).then(r => r.data),
+
+  getDetail: (id: string) =>
+    client.get<ExecutionResult>(`/api/executions/${id}`).then(r => r.data),
+}
+
+// ── Schedules ─────────────────────────────────────────────────
+export const schedulesApi = {
+  list: () => client.get<Schedule[]>('/api/schedules').then(r => r.data),
+  get: (id: string) => client.get<Schedule>(`/api/schedules/${id}`).then(r => r.data),
+  create: (data: ScheduleCreateRequest) =>
+    client.post<Schedule>('/api/schedules', data).then(r => r.data),
+  update: (id: string, data: Partial<ScheduleCreateRequest> & { enabled?: boolean }) =>
+    client.put<Schedule>(`/api/schedules/${id}`, data).then(r => r.data),
+  delete: (id: string) => client.delete(`/api/schedules/${id}`),
+  setEnabled: (id: string, enabled: boolean) =>
+    client.patch<Schedule>(`/api/schedules/${id}/enabled`, null, { params: { enabled } }).then(r => r.data),
+  trigger: (id: string) =>
+    client.post(`/api/schedules/${id}/trigger`).then(r => r.data),
+  listExecutions: (id: string) =>
+    client.get<ScheduleExecutionDetail[]>(`/api/schedules/${id}/executions`).then(r => r.data),
+  listByJob: (jobId: string) =>
+    client.get<Schedule[]>(`/api/schedules/by-job/${jobId}`).then(r => r.data),
 }
