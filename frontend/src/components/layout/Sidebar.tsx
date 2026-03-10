@@ -97,7 +97,7 @@ const navItems = [
         />
       </svg>
     ),
-    label: "Schedules",
+    label: "Actions",
   },
 ];
 

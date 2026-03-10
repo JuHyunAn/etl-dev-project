@@ -41,10 +41,11 @@ class Schedule(
     @Column(name = "consecutive_failures", nullable = false)
     var consecutiveFailures: Int = 0,
 
-    @Column(name = "alert_on_failure", nullable = false)
-    var alertOnFailure: Boolean = true,
+    /** NONE | ON_FAILURE | ON_SUCCESS | ON_COMPLETION */
+    @Column(name = "alert_condition", nullable = false, length = 20)
+    var alertCondition: String = "NONE",
 
-    @Column(name = "alert_channel", length = 50)
+    @Column(name = "alert_channel", length = 255)
     var alertChannel: String? = null,
 
     @Column(name = "created_by")
@@ -138,8 +139,8 @@ class ScheduleStepExecution(
     @Column(name = "schedule_execution_id", nullable = false)
     val scheduleExecutionId: UUID,
 
-    @Column(name = "schedule_step_id", nullable = false)
-    val scheduleStepId: UUID,
+    @Column(name = "schedule_step_id", nullable = true)
+    val scheduleStepId: UUID?,
 
     @Column(name = "execution_id")
     var executionId: UUID? = null,

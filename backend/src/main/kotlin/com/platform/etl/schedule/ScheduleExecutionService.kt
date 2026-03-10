@@ -15,7 +15,8 @@ class ScheduleExecutionService(
     private val scheduleExecutionRepository: ScheduleExecutionRepository,
     private val stepExecutionRepository: ScheduleStepExecutionRepository,
     private val executionService: ExecutionService,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val alertService: AlertService
 ) {
     @Transactional
     fun trigger(scheduleId: UUID, triggerType: String = "CRON") {
@@ -141,6 +142,34 @@ class ScheduleExecutionService(
             schedule.consecutiveFailures++
         }
         scheduleRepository.save(schedule)
+
+        // 알림 조건 평가
+        sendAlertIfNeeded(schedule, schedExec)
+    }
+
+    private fun sendAlertIfNeeded(schedule: Schedule, schedExec: ScheduleExecution) {
+        val finalStatus = schedExec.status
+        val shouldAlert = when (schedule.alertCondition) {
+            "ON_COMPLETION" -> true
+            "ON_SUCCESS"    -> finalStatus == "SUCCESS"
+            "ON_FAILURE"    -> finalStatus in listOf("FAILED", "PARTIAL")
+            else            -> false  // NONE
+        }
+        if (!shouldAlert) return
+
+        val to = schedule.alertChannel?.takeIf { it.isNotBlank() } ?: return
+
+        alertService.sendScheduleAlert(
+            to = to,
+            scheduleName = schedule.name,
+            finalStatus = finalStatus,
+            startedAt = schedExec.startedAt.toString(),
+            finishedAt = schedExec.finishedAt?.toString(),
+            totalSteps = schedExec.totalSteps,
+            completedSteps = schedExec.completedSteps,
+            failedSteps = schedExec.failedSteps,
+            errorSummary = schedExec.errorSummary
+        )
     }
 
     private fun canRunStep(step: ScheduleStep, stepResults: Map<UUID, String>): Boolean {

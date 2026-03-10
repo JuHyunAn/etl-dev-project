@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import axios from 'axios'
+import client from '../api/client'
 
 export interface AuthUser {
   id: string
@@ -48,14 +49,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         { withCredentials: true }
       )
       const { accessToken, user } = res.data
-      // setAuth()가 이미 호출된 경우(OAuth2 콜백 등) 덮어쓰지 않음
-      if (tokenRef.current) return true
+      // 항상 새 토큰으로 갱신 (만료 토큰이 남아있어도 덮어씀)
       tokenRef.current = accessToken
       setState({ user, accessToken, loading: false })
       scheduleRefresh(15)
       return true
     } catch {
-      // setAuth()가 이미 호출된 경우 로그아웃 상태로 되돌리지 않음
+      // refresh 실패 시: setAuth()로 이미 유효한 토큰이 있으면 로그아웃하지 않음
       if (tokenRef.current) return true
       setState({ user: null, accessToken: null, loading: false })
       return false
@@ -78,7 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      await axios.delete('http://localhost:8080/api/auth/logout', { withCredentials: true })
+      await client.delete('/api/auth/logout')
     } catch { /* 무시 */ }
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
     tokenRef.current = null

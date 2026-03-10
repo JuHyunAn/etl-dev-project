@@ -24,11 +24,11 @@ const STATUS_COLOR: Record<string, string> = {
   PARTIAL: "#f59e0b", CANCELLED: "#94a3b8", PENDING: "#94a3b8", SKIPPED: "#cbd5e1",
 };
 const CRON_PRESETS = [
-  { label: "매 시간", value: "0 * * * *" },
-  { label: "매일 06:00", value: "0 6 * * *" },
-  { label: "매일 자정", value: "0 0 * * *" },
-  { label: "매주 월요일", value: "0 0 * * 1" },
-  { label: "매월 1일", value: "0 0 1 * *" },
+  { label: "매 시간", value: "0 0 * * * ?" },
+  { label: "매일 06:00", value: "0 0 6 * * ?" },
+  { label: "매일 자정", value: "0 0 0 * * ?" },
+  { label: "매주 월요일", value: "0 0 0 ? * MON" },
+  { label: "매월 1일", value: "0 0 0 1 * ?" },
 ];
 
 function StatusDot({ status, size = "sm" }: { status: string; size?: "sm" | "md" }) {
@@ -288,7 +288,8 @@ function SettingsTab({
   const [description, setDescription] = useState(schedule.description ?? "");
   const [cron, setCron] = useState(schedule.cronExpression);
   const [timezone, setTimezone] = useState(schedule.timezone);
-  const [alertOnFailure, setAlertOnFailure] = useState(schedule.alertOnFailure);
+  const [alertCondition, setAlertCondition] = useState(schedule.alertCondition ?? "NONE");
+  const [alertChannel, setAlertChannel] = useState(schedule.alertChannel ?? "");
   const [steps, setSteps] = useState(
     schedule.steps.map((s) => ({
       id: s.id, jobId: s.jobId, stepOrder: s.stepOrder,
@@ -316,7 +317,8 @@ function SettingsTab({
         description: description.trim() || undefined,
         cronExpression: cron.trim(),
         timezone,
-        alertOnFailure,
+        alertCondition,
+        alertChannel: alertChannel.trim() || undefined,
         steps: steps.filter((s) => s.jobId).map((s) => ({
           jobId: s.jobId,
           stepOrder: s.stepOrder,
@@ -341,15 +343,15 @@ function SettingsTab({
     <div className="space-y-5">
       {/* 기본 정보 */}
       <div className="p-4 rounded-xl space-y-3" style={{ border: "1px solid #e2e8f0" }}>
-        <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#64748b" }}>기본 정보</p>
+        <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#64748b" }}>Workflow Details</p>
         <div>
-          <label className="text-xs font-medium block mb-1" style={{ color: "#374151" }}>이름</label>
+          <label className="text-xs font-medium block mb-1" style={{ color: "#374151" }}>Name</label>
           <input value={name} onChange={(e) => setName(e.target.value)}
             className="w-full px-3 py-2 rounded-lg text-sm outline-none"
             style={{ border: "1px solid #d1d5db", background: "#f8fafc", color: "#0f172a" }} />
         </div>
         <div>
-          <label className="text-xs font-medium block mb-1" style={{ color: "#374151" }}>설명</label>
+          <label className="text-xs font-medium block mb-1" style={{ color: "#374151" }}>Description</label>
           <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
             className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-y"
             style={{ border: "1px solid #d1d5db", background: "#f8fafc", color: "#0f172a" }} />
@@ -358,7 +360,7 @@ function SettingsTab({
 
       {/* Cron */}
       <div className="p-4 rounded-xl space-y-3" style={{ border: "1px solid #e2e8f0" }}>
-        <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#64748b" }}>실행 일정</p>
+        <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#64748b" }}>Run Configuration</p>
         <div className="flex gap-2 flex-wrap">
           {CRON_PRESETS.map((p) => (
             <button key={p.value} onClick={() => setCron(p.value)}
@@ -386,9 +388,9 @@ function SettingsTab({
       {/* Steps */}
       <div className="p-4 rounded-xl space-y-3" style={{ border: "1px solid #e2e8f0" }}>
         <div className="flex items-center justify-between">
-          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#64748b" }}>실행 Steps</p>
+          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#64748b" }}>Flow</p>
           <button onClick={addStep} className="text-xs px-2 py-1 rounded" style={{ background: "#eff6ff", color: "#2563eb" }}>
-            + 추가
+            + Add
           </button>
         </div>
         {steps.length === 0 && <p className="text-xs" style={{ color: "#94a3b8" }}>Step이 없습니다.</p>}
@@ -407,19 +409,19 @@ function SettingsTab({
             </div>
             <div className="flex gap-2 flex-wrap">
               <div className="flex-1 min-w-[120px]">
-                <label className="text-[10px]" style={{ color: "#94a3b8" }}>선행 Step</label>
+                <label className="text-[10px]" style={{ color: "#94a3b8" }}>Upstream Step</label>
                 <select value={step.dependsOnStepId}
                   onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, dependsOnStepId: e.target.value } : x))}
                   className="w-full px-2 py-1 rounded text-xs outline-none mt-0.5"
                   style={{ border: "1px solid #d1d5db", background: "#ffffff", color: "#0f172a" }}>
                   <option value="">없음</option>
-                  {steps.filter((_, idx) => idx !== i).map((s, idx) => (
+                  {steps.filter((_, idx) => idx < i).map((s, idx) => (
                     <option key={idx} value={s.id || `step-${idx}`}>Step {s.stepOrder}</option>
                   ))}
                 </select>
               </div>
               <div className="flex-1 min-w-[110px]">
-                <label className="text-[10px]" style={{ color: "#94a3b8" }}>실행 조건</label>
+                <label className="text-[10px]" style={{ color: "#94a3b8" }}>Run Condition</label>
                 <select value={step.runCondition}
                   onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, runCondition: e.target.value as "ON_SUCCESS" | "ON_FAILURE" | "ON_COMPLETE" } : x))}
                   className="w-full px-2 py-1 rounded text-xs outline-none mt-0.5"
@@ -443,11 +445,46 @@ function SettingsTab({
 
       {/* 알림 */}
       <div className="p-4 rounded-xl" style={{ border: "1px solid #e2e8f0" }}>
-        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: "#64748b" }}>알림 설정</p>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={alertOnFailure} onChange={(e) => setAlertOnFailure(e.target.checked)} />
-          <span className="text-xs" style={{ color: "#374151" }}>실패 시 알림</span>
-        </label>
+        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: "#64748b" }}>Alert Settings</p>
+        <div className="flex flex-col gap-2 mb-3">
+          {([
+            { value: "NONE",          label: "없음",         desc: "" },
+            { value: "ON_FAILURE",    label: "On Failure",   desc: "실패 시" },
+            { value: "ON_SUCCESS",    label: "On Success",   desc: "성공 시" },
+            { value: "ON_COMPLETION", label: "On Completion",desc: "성공/실패 무관 완료 시" },
+          ] as const).map((opt) => (
+            <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="alertCondition"
+                value={opt.value}
+                checked={alertCondition === opt.value}
+                onChange={() => setAlertCondition(opt.value)}
+              />
+              <span className="text-xs" style={{ color: "#374151" }}>
+                {opt.label} <span style={{ color: "#94a3b8" }}> &nbsp;&nbsp; {opt.desc}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <div>
+          <label className="text-[10px] block mb-1" style={{ color: "#94a3b8" }}>
+            수신 이메일 <span style={{ color: "#cbd5e1" }}>(NONE 선택 시 발송 안 됨)</span>
+          </label>
+          <input
+            type="email"
+            value={alertChannel}
+            onChange={(e) => setAlertChannel(e.target.value)}
+            placeholder="alert@example.com"
+            disabled={alertCondition === "NONE"}
+            className="w-full text-xs rounded px-2 py-1.5"
+            style={{
+              border: "1px solid #d1d5db",
+              background: alertCondition === "NONE" ? "#f8fafc" : "#ffffff",
+              color: alertCondition === "NONE" ? "#94a3b8" : "#0f172a",
+            }}
+          />
+        </div>
       </div>
 
       {err && <p className="text-xs" style={{ color: "#ef4444" }}>{err}</p>}
@@ -491,7 +528,7 @@ function ScheduleDetail({
   };
 
   const tabs = [
-    { key: "pipeline", label: "Pipeline" },
+    { key: "pipeline", label: "파이프라인" },
     { key: "history", label: "실행 이력" },
     { key: "settings", label: "설정" },
   ] as const;
@@ -579,7 +616,7 @@ function NewScheduleModal({ onClose, onCreated, allJobs }: {
   onClose: () => void; onCreated: (s: Schedule) => void; allJobs: Job[];
 }) {
   const [name, setName] = useState("");
-  const [cron, setCron] = useState("0 6 * * *");
+  const [cron, setCron] = useState("0 0 6 * * ?");
   const [timezone, setTimezone] = useState("Asia/Seoul");
   const [enabled, setEnabled] = useState(false);
   const [steps, setSteps] = useState<{ jobId: string; runCondition: string }[]>([]);
@@ -759,7 +796,7 @@ export default function SchedulesPage() {
       {/* 헤더 */}
       <div className="px-6 py-4 flex items-center justify-between flex-shrink-0" style={{ borderBottom: "1px solid #e2e8f0" }}>
         <div>
-          <h1 className="text-xl font-bold" style={{ color: "#0f172a" }}>Schedules</h1>
+          <h1 className="text-xl font-bold" style={{ color: "#0f172a" }}>Actions</h1>
           <p className="text-sm mt-0.5" style={{ color: "#64748b" }}>
             {schedules.length}개의 스케줄 · {schedules.filter((s) => s.enabled).length}개 활성
           </p>
@@ -767,7 +804,7 @@ export default function SchedulesPage() {
         <button onClick={() => setShowNew(true)}
           className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg text-white"
           style={{ background: "#2563eb" }}>
-          <span className="text-base leading-none">+</span> New Schedule
+          <span className="text-base leading-none">+</span> New workflow
         </button>
       </div>
 
@@ -792,8 +829,8 @@ export default function SchedulesPage() {
               {/* 요약 헤더 */}
               <div className="px-4 py-2.5" style={{ borderBottom: "1px solid #f1f5f9" }}>
                 <div className="flex text-[10px] font-semibold uppercase tracking-wider gap-4" style={{ color: "#94a3b8" }}>
-                  <span className="flex-1">Schedule</span>
-                  <span>최근 실행</span>
+                  <span className="flex-1">All workflows</span>
+                  <span>Recent Runs</span>
                 </div>
               </div>
               <div>

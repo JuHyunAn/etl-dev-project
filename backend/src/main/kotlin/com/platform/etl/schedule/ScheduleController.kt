@@ -13,9 +13,7 @@ class ScheduleController(private val service: ScheduleService) {
 
     @GetMapping("/{id}")
     fun get(@PathVariable id: UUID): ResponseEntity<ScheduleDto> =
-        runCatching { service.getDto(id) }
-            .map { ResponseEntity.ok(it) }
-            .getOrElse { ResponseEntity.notFound().build() }
+        ResponseEntity.ok(service.getDto(id))
 
     @PostMapping
     fun create(@RequestBody req: ScheduleCreateRequest): ResponseEntity<ScheduleDto> =
@@ -23,18 +21,14 @@ class ScheduleController(private val service: ScheduleService) {
 
     @PutMapping("/{id}")
     fun update(@PathVariable id: UUID, @RequestBody req: ScheduleUpdateRequest): ResponseEntity<ScheduleDto> =
-        runCatching { service.update(id, req) }
-            .map { ResponseEntity.ok(it) }
-            .getOrElse { ResponseEntity.notFound().build() }
+        ResponseEntity.ok(service.update(id, req))
 
     @PatchMapping("/{id}/enabled")
     fun setEnabled(
         @PathVariable id: UUID,
         @RequestParam enabled: Boolean
     ): ResponseEntity<ScheduleDto> =
-        runCatching { service.setEnabled(id, enabled) }
-            .map { ResponseEntity.ok(it) }
-            .getOrElse { ResponseEntity.notFound().build() }
+        ResponseEntity.ok(service.setEnabled(id, enabled))
 
     @DeleteMapping("/{id}")
     fun delete(@PathVariable id: UUID): ResponseEntity<Void> {
@@ -44,15 +38,11 @@ class ScheduleController(private val service: ScheduleService) {
 
     @PostMapping("/{id}/trigger")
     fun trigger(@PathVariable id: UUID): ResponseEntity<ScheduleExecutionSummaryDto> =
-        runCatching { service.triggerManual(id) }
-            .map { ResponseEntity.ok(it) }
-            .getOrElse { ResponseEntity.notFound().build() }
+        ResponseEntity.ok(service.triggerManual(id))
 
     @GetMapping("/{id}/executions")
     fun executions(@PathVariable id: UUID): ResponseEntity<List<ScheduleExecutionDetailDto>> =
-        runCatching { service.listExecutions(id) }
-            .map { ResponseEntity.ok(it) }
-            .getOrElse { ResponseEntity.notFound().build() }
+        ResponseEntity.ok(service.listExecutions(id))
 
     /** 특정 Job이 포함된 스케줄 목록 */
     @GetMapping("/by-job/{jobId}")

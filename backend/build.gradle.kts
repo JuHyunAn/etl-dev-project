@@ -50,6 +50,9 @@ dependencies {
     // Quartz Scheduler
     implementation("org.springframework.boot:spring-boot-starter-quartz")
 
+    // Mail
+    implementation("org.springframework.boot:spring-boot-starter-mail")
+
     // Crypto (Connection 비밀번호 암호화)
     implementation("org.springframework.security:spring-security-crypto")
     implementation("commons-codec:commons-codec")

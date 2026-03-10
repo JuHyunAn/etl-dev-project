@@ -2309,16 +2309,17 @@ function SchedulePanel({ jobId }: { jobId: string }) {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [showQuickModal, setShowQuickModal] = useState(false);
-  const [quickCron, setQuickCron] = useState("0 6 * * *");
+  const [quickCron, setQuickCron] = useState("0 0 6 * * ?");
   const [quickName, setQuickName] = useState("");
   const [quickEnabled, setQuickEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [quickErr, setQuickErr] = useState("");
 
   const QUICK_PRESETS = [
-    { label: "매 시간", value: "0 * * * *" },
-    { label: "매일 06:00", value: "0 6 * * *" },
-    { label: "매일 자정", value: "0 0 * * *" },
-    { label: "매주 월", value: "0 0 * * 1" },
+    { label: "매 시간", value: "0 0 * * * ?" },
+    { label: "매일 06:00", value: "0 0 6 * * ?" },
+    { label: "매일 자정", value: "0 0 0 * * ?" },
+    { label: "매주 월", value: "0 0 0 ? * MON" },
   ];
 
   useEffect(() => {
@@ -2330,6 +2331,7 @@ function SchedulePanel({ jobId }: { jobId: string }) {
   const handleQuickCreate = async () => {
     if (!quickName.trim() || !quickCron.trim()) return;
     setSaving(true);
+    setQuickErr("");
     try {
       await schedulesApi.create({
         name: quickName.trim(),
@@ -2342,6 +2344,9 @@ function SchedulePanel({ jobId }: { jobId: string }) {
       setSchedules(updated);
       setShowQuickModal(false);
       setQuickName("");
+      setQuickErr("");
+    } catch (e: unknown) {
+      setQuickErr(e instanceof Error ? e.message : "생성 실패");
     } finally {
       setSaving(false);
     }
@@ -2413,7 +2418,6 @@ function SchedulePanel({ jobId }: { jobId: string }) {
                 className="text-[10px]"
                 style={{ color: "#58a6ff" }}
               >
-                →
               </button>
             </div>
           ))}
@@ -2459,9 +2463,10 @@ function SchedulePanel({ jobId }: { jobId: string }) {
                 <input type="checkbox" checked={quickEnabled} onChange={(e) => setQuickEnabled(e.target.checked)} />
                 <span className="text-xs" style={{ color: "#8b949e" }}>즉시 활성화</span>
               </label>
+              {quickErr && <p className="text-xs" style={{ color: "#f85149" }}>{quickErr}</p>}
             </div>
             <div className="flex justify-end gap-2 px-4 py-3" style={{ borderTop: "1px solid #30363d" }}>
-              <button onClick={() => setShowQuickModal(false)} className="text-xs px-3 py-1.5 rounded"
+              <button onClick={() => { setShowQuickModal(false); setQuickErr(""); }} className="text-xs px-3 py-1.5 rounded"
                 style={{ border: "1px solid #30363d", color: "#8b949e" }}>취소</button>
               <button onClick={handleQuickCreate} disabled={saving || !quickName.trim()}
                 className="text-xs px-3 py-1.5 rounded disabled:opacity-40"

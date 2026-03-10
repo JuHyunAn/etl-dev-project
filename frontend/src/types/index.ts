@@ -216,7 +216,7 @@ export interface Schedule {
   lastFiredAt?: string
   nextFireAt?: string
   consecutiveFailures: number
-  alertOnFailure: boolean
+  alertCondition: string
   alertChannel?: string
   createdBy?: string
   createdAt: string
@@ -231,7 +231,7 @@ export interface ScheduleCreateRequest {
   cronExpression: string
   timezone?: string
   enabled?: boolean
-  alertOnFailure?: boolean
+  alertCondition?: string
   alertChannel?: string
   steps: {
     jobId: string

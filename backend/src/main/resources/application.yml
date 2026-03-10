@@ -40,11 +40,26 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+
 server:
   port: 8080
 
 etl:
   frontend-url: ${FRONTEND_URL:http://localhost:3001}
+  alert:
+    from: ${MAIL_FROM:no-reply@etl-platform.local}
   encryption:
     secret: ${ENCRYPTION_SECRET:default-dev-secret-change-in-prod}
   jwt:

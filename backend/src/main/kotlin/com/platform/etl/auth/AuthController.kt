@@ -124,6 +124,15 @@ class AuthController(
         response: HttpServletResponse,
         @AuthenticationPrincipal user: User?
     ): ResponseEntity<Void> {
+        // JWT 인증 없이도 쿠키 값으로 직접 토큰 삭제
+        val rawToken = request.cookies?.firstOrNull { it.name == "etl_refresh" }?.value
+        if (rawToken != null) {
+            val tokenHash = sha256Hex(rawToken)
+            refreshTokenRepository.findByTokenHash(tokenHash)?.let {
+                refreshTokenRepository.delete(it)
+            }
+        }
+        // 인증된 경우 해당 유저의 모든 토큰 삭제
         user?.let { refreshTokenRepository.deleteAllByUserId(it.id) }
         clearRefreshCookie(response)
         request.getSession(false)?.invalidate()

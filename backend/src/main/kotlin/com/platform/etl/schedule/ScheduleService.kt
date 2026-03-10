@@ -29,15 +29,48 @@ class ScheduleService(
 
     fun getDto(id: UUID): ScheduleDto = get(id).toDto()
 
+    /**
+     * Step 목록에서 순환 의존(Circular Dependency) 검사.
+     * dependsOnStepId는 임시 인덱스 기반 값 대신 UUID를 사용하므로,
+     * 여기서는 stepOrder 기준으로 "선행이 자신보다 앞에 있어야 함"을 검증한다.
+     */
+    private fun validateStepDependencies(steps: List<ScheduleStepRequest>) {
+        steps.forEachIndexed { idx, step ->
+            if (step.dependsOnStepId != null) {
+                val depIdx = steps.indexOfFirst { it.jobId == step.dependsOnStepId }
+                if (depIdx >= idx) {
+                    throw IllegalArgumentException(
+                        "Step ${idx + 1}의 선행 Step이 자신과 같거나 뒤에 위치해 있습니다. 선행 Step은 반드시 앞에 위치해야 합니다."
+                    )
+                }
+            }
+        }
+        // 순환 의존 체크: 의존 관계를 따라가면서 자기 자신에게 돌아오는지 확인
+        val depMap = steps.mapIndexed { idx, step ->
+            idx to steps.indexOfFirst { it.jobId == step.dependsOnStepId }.takeIf { it >= 0 }
+        }.toMap()
+        steps.indices.forEach { startIdx ->
+            val visited = mutableSetOf<Int>()
+            var cur: Int? = depMap[startIdx]
+            while (cur != null) {
+                if (!visited.add(cur)) {
+                    throw IllegalArgumentException("Step 의존 관계에 순환이 감지되었습니다.")
+                }
+                cur = depMap[cur]
+            }
+        }
+    }
+
     @Transactional
     fun create(req: ScheduleCreateRequest, createdBy: UUID? = null): ScheduleDto {
+        if (req.steps.isNotEmpty()) validateStepDependencies(req.steps)
         val schedule = Schedule(
             name = req.name,
             description = req.description,
             cronExpression = req.cronExpression,
             timezone = req.timezone,
             enabled = req.enabled,
-            alertOnFailure = req.alertOnFailure,
+            alertCondition = req.alertCondition,
             alertChannel = req.alertChannel,
             createdBy = createdBy
         )
@@ -72,14 +105,16 @@ class ScheduleService(
         req.description?.let { schedule.description = it }
         req.cronExpression?.let { schedule.cronExpression = it }
         req.timezone?.let { schedule.timezone = it }
-        req.alertOnFailure?.let { schedule.alertOnFailure = it }
+        req.alertCondition?.let { schedule.alertCondition = it }
         req.alertChannel?.let { schedule.alertChannel = it }
         schedule.updatedAt = LocalDateTime.now()
         scheduleRepository.save(schedule)
 
         // steps 재동기화 (있을 때만)
+        req.steps?.let { if (it.isNotEmpty()) validateStepDependencies(it) }
         req.steps?.let { steps ->
             scheduleStepRepository.deleteByScheduleId(id)
+            scheduleStepRepository.flush()
             steps.forEachIndexed { idx, stepReq ->
                 val step = ScheduleStep(
                     scheduleId = id,
@@ -152,6 +187,21 @@ class ScheduleService(
     /** 서버 재시작 시 Quartz 재등록용 (public) */
     fun reloadQuartz(schedule: Schedule) = syncToQuartz(schedule)
 
+    /**
+     * Unix 5필드 cron (분 시 일 월 요일) → Quartz 6필드 cron (초 분 시 일 월 요일) 변환
+     * 이미 6필드 이상이면 그대로 반환
+     */
+    private fun toQuartzCron(expression: String): String {
+        val parts = expression.trim().split("\\s+".toRegex())
+        if (parts.size >= 6) return expression  // 이미 Quartz 형식
+        if (parts.size != 5) return expression  // 알 수 없는 형식, 그대로 전달
+        val (min, hour, dom, month, dow) = parts
+        // Quartz는 day-of-month, day-of-week 중 하나만 지정 가능 (나머지는 ?)
+        val qDom = if (dow != "*" && dow != "?") "?" else dom
+        val qDow = if (qDom != "?" && dow == "*") "?" else dow
+        return "0 $min $hour $qDom $month $qDow"
+    }
+
     // Quartz 동기화
     private fun syncToQuartz(schedule: Schedule) {
         val jobKey = JobKey.jobKey(schedule.id.toString(), GROUP)
@@ -168,12 +218,14 @@ class ScheduleService(
             .storeDurably()
             .build()
 
+        val quartzCron = toQuartzCron(schedule.cronExpression)
+
         val trigger = TriggerBuilder.newTrigger()
             .withIdentity(triggerKey)
             .forJob(jobDetail)
             .withSchedule(
                 CronScheduleBuilder
-                    .cronSchedule(schedule.cronExpression)
+                    .cronSchedule(quartzCron)
                     .inTimeZone(TimeZone.getTimeZone(ZoneId.of(schedule.timezone)))
             )
             .build()
@@ -207,7 +259,7 @@ class ScheduleService(
             lastFiredAt = lastFiredAt?.toString(),
             nextFireAt = nextFireAt?.toString(),
             consecutiveFailures = consecutiveFailures,
-            alertOnFailure = alertOnFailure,
+            alertCondition = alertCondition,
             alertChannel = alertChannel,
             createdBy = createdBy?.toString(),
             createdAt = createdAt.toString(),
@@ -230,7 +282,7 @@ data class ScheduleDto(
     val lastFiredAt: String?,
     val nextFireAt: String?,
     val consecutiveFailures: Int,
-    val alertOnFailure: Boolean,
+    val alertCondition: String,
     val alertChannel: String?,
     val createdBy: String?,
     val createdAt: String,
@@ -284,7 +336,7 @@ data class ScheduleExecutionDetailDto(
 
 data class StepExecutionDto(
     val id: UUID,
-    val scheduleStepId: UUID,
+    val scheduleStepId: UUID?,
     val executionId: UUID?,
     val jobId: UUID,
     val stepOrder: Int,
@@ -314,7 +366,7 @@ data class ScheduleCreateRequest(
     val cronExpression: String,
     val timezone: String = "Asia/Seoul",
     val enabled: Boolean = false,
-    val alertOnFailure: Boolean = true,
+    val alertCondition: String = "NONE",
     val alertChannel: String? = null,
     val steps: List<ScheduleStepRequest> = emptyList()
 )
@@ -325,7 +377,7 @@ data class ScheduleUpdateRequest(
     val cronExpression: String? = null,
     val timezone: String? = null,
     val enabled: Boolean? = null,
-    val alertOnFailure: Boolean? = null,
+    val alertCondition: String? = null,
     val alertChannel: String? = null,
     val steps: List<ScheduleStepRequest>? = null
 )

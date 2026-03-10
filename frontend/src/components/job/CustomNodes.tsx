@@ -165,7 +165,7 @@ const ETLNode = memo(({ id, data, selected }: NodeProps) => {
     ? '#2563eb'
     : status === 'failed'  ? '#dc2626'
     : status === 'success' ? '#16a34a'
-    : '#d1d5db'
+    : '#252b37'
 
   const boxShadow = selected
     ? '0 0 0 3px rgba(37,99,235,0.18), 0 2px 8px rgba(0,0,0,0.08)'
@@ -219,7 +219,7 @@ const ETLNode = memo(({ id, data, selected }: NodeProps) => {
           width: 220,
           background: '#ffffff',
           border: `1.5px solid ${borderColor}`,
-          borderRadius: 10,
+          borderRadius: 4.5,
           overflow: 'hidden',
           boxShadow,
           transition: 'border-color 0.15s, box-shadow 0.15s',
