@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import type { Node } from '@xyflow/react'
+import type { Node, Edge } from '@xyflow/react'
 import { Input, Select, Button, Spinner } from '../ui'
 import type { ComponentType, Connection, ColumnInfo } from '../../types'
 import { connectionsApi, schemaApi } from '../../api'
@@ -15,6 +15,9 @@ interface Props {
   node: Node | null
   onUpdate: (nodeId: string, data: Partial<NodeData>) => void
   onDelete: (nodeId: string) => void
+  allNodes?: Node[]
+  allEdges?: Edge[]
+  onOpenMappingEditor?: (outputNodeId: string) => void
 }
 
 // ── JSON 예제 정의 ─────────────────────────────────────────────
@@ -385,38 +388,250 @@ function FilterConfig({ config, onChange }: { config: Record<string, unknown>; o
   )
 }
 
-// ── Map Config (with hint to use double-click) ─────────────────
-function MapConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (k: string, v: unknown) => void }) {
+// ── Map Config (TOS 스타일 아코디언 — Output별 매핑 JSON) ────────
+function MapConfig({
+  nodeId, config, onChange, allNodes, allEdges, onOpenMappingEditor,
+}: {
+  nodeId: string
+  config: Record<string, unknown>
+  onChange: (k: string, v: unknown) => void
+  allNodes?: Node[]
+  allEdges?: Edge[]
+  onOpenMappingEditor?: (outputNodeId: string) => void
+}) {
+  // 초기 열림 상태 추적
+  const [expandedIds, setExpandedIds] = React.useState<Set<string>>(new Set())
+  const initializedRef = React.useRef(false)
+
+  // 이 tMap에서 ROW 엣지로 직접 연결된 T_JDBC_OUTPUT 노드 목록
+  // (직접 연결 + BFS 양쪽 모두 지원)
+  const connectedOutputs = React.useMemo(() => {
+    if (!allEdges || !allNodes) return []
+
+    // ROW 엣지 source→targets 맵
+    const rowEdgesBySource: Record<string, string[]> = {}
+    allEdges.forEach(e => {
+      const lt = (e.data as Record<string, unknown>)?.linkType as string | undefined
+      if (lt === 'ROW' || lt === undefined || lt === null) {
+        if (!rowEdgesBySource[e.source]) rowEdgesBySource[e.source] = []
+        rowEdgesBySource[e.source].push(e.target)
+      }
+    })
+
+    // forward BFS로 모든 downstream 노드 수집
+    const visited = new Set<string>()
+    const queue: string[] = [nodeId]
+    while (queue.length > 0) {
+      const id = queue.shift()!
+      if (visited.has(id)) continue
+      visited.add(id)
+      const nexts = rowEdgesBySource[id] || []
+      nexts.forEach(t => queue.push(t))
+    }
+    visited.delete(nodeId)
+
+    const outMaps = (config.outputMappings ?? {}) as Record<string, unknown>
+
+    return allNodes
+      .filter(n => {
+        if (!visited.has(n.id)) return false
+        const d = n.data as Record<string, unknown>
+        return d?.componentType === 'T_JDBC_OUTPUT'
+      })
+      .map(n => {
+        const d = n.data as Record<string, unknown>
+        const cfg = (d?.config ?? {}) as Record<string, unknown>
+        const writeMode = (cfg?.writeMode as string) || 'INSERT'
+        // 매핑 수: outputMappings[id] 우선, 단일 output이면 legacy mappings 폴백
+        let mappingCount = 0
+        const specific = outMaps[n.id]
+        if (Array.isArray(specific)) mappingCount = specific.length
+        else if (Array.isArray(config.mappings)) mappingCount = (config.mappings as unknown[]).length
+        return {
+          id: n.id,
+          label: (d?.label as string) || 'Output',
+          tableName: (cfg?.tableName as string) || '',
+          writeMode,
+          mappingCount,
+        }
+      })
+  }, [nodeId, allEdges, allNodes, config])
+
+  // 처음 outputs이 감지되면 전부 열기
+  React.useEffect(() => {
+    if (!initializedRef.current && connectedOutputs.length > 0) {
+      setExpandedIds(new Set(connectedOutputs.map(o => o.id)))
+      initializedRef.current = true
+    }
+  }, [connectedOutputs])
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // 특정 Output의 매핑 JSON 문자열 반환
+  const getMappingJson = (outputId: string): string => {
+    const outMaps = (config.outputMappings ?? {}) as Record<string, unknown>
+    const val = outMaps[outputId]
+    if (Array.isArray(val)) return JSON.stringify(val, null, 2)
+    if (typeof val === 'string') return val
+    // legacy fallback: 단일 output이면 config.mappings 표시
+    if (connectedOutputs.length === 1) {
+      const m = config.mappings
+      if (Array.isArray(m)) return JSON.stringify(m, null, 2)
+      if (typeof m === 'string') return m as string
+    }
+    return '[]'
+  }
+
+  // 매핑 JSON 변경 시 outputMappings에 저장
+  const handleMappingChange = (outputId: string, raw: string) => {
+    const outMaps = ((config.outputMappings ?? {}) as Record<string, unknown>)
+    try {
+      const parsed = JSON.parse(raw)
+      onChange('__raw', { ...config, outputMappings: { ...outMaps, [outputId]: parsed } })
+    } catch {
+      // 파싱 실패 시 문자열 그대로 보관 (입력 중)
+      onChange('__raw', { ...config, outputMappings: { ...outMaps, [outputId]: raw } })
+    }
+  }
+
+  const writeModeColor: Record<string, { bg: string; text: string }> = {
+    INSERT:          { bg: '#dbeafe', text: '#1d4ed8' },
+    TRUNCATE_INSERT: { bg: '#fef9c3', text: '#92400e' },
+    UPDATE:          { bg: '#dcfce7', text: '#166534' },
+    UPSERT:          { bg: '#f3e8ff', text: '#6b21a8' },
+  }
+
   return (
-    <div className="space-y-3">
-      {/* Double-click hint */}
-      <div className="flex items-start gap-2 p-2.5 rounded-md" style={{ background: '#eff6ff', border: '1px solid #bfdbfe' }}>
-        <svg className="w-3.5 h-3.5 text-[#2563eb] flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <p className="text-[10px] text-[#2563eb] leading-relaxed">
-          노드를 <strong>더블클릭</strong>하면 시각적 매핑 에디터가 열립니다.<br />
-          연결된 Input 테이블의 컬럼을 선택해 매핑할 수 있습니다.
-        </p>
+    <div className="space-y-2">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between mb-0.5">
+        <label className="text-xs font-medium" style={{ color: '#374151' }}>
+          Output 매핑
+          <span className="ml-1.5 text-[10px] font-normal" style={{ color: '#94a3b8' }}>
+            ({connectedOutputs.length}개 연결됨)
+          </span>
+        </label>
       </div>
 
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <label className="text-xs font-medium text-[#64748b]">Column Mappings (JSON)</label>
-          <JsonExampleButton type="T_MAP" />
+      {/* Output 없을 때 경고 */}
+      {connectedOutputs.length === 0 && (
+        <div className="flex items-center gap-2 px-2.5 py-2 rounded-md text-[10px]"
+          style={{ background: '#fef9c3', border: '1px solid #fde68a', color: '#92400e' }}>
+          <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          T_JDBC_OUTPUT 노드를 ROW 엣지로 연결하면 Output별 매핑이 표시됩니다
         </div>
-        <textarea
-          value={typeof config.mappings === 'string'
-            ? config.mappings
-            : JSON.stringify(config.mappings ?? [], null, 2)}
-          onChange={e => onChange('mappings', e.target.value)}
-          placeholder={'[{"sourceColumn": "col_a", "targetName": "col_b", "expression": "", "type": "VARCHAR"}]'}
-          rows={18}
-          className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded-md px-3 py-2
-            text-xs font-mono placeholder-[#94a3b8] focus:outline-none focus:border-[#2563eb] resize-y"
-        />
-      </div>
+      )}
+
+      {/* Output별 아코디언 */}
+      {connectedOutputs.map(out => {
+        const isOpen = expandedIds.has(out.id)
+        const wmc = writeModeColor[out.writeMode] ?? { bg: '#f1f5f9', text: '#64748b' }
+        return (
+          <div key={out.id} className="rounded-md overflow-hidden"
+            style={{ border: '1px solid #e2e8f0' }}>
+            {/* 아코디언 헤더 */}
+            <button
+              className="w-full flex items-center gap-2 px-2.5 py-2 text-left transition-colors"
+              style={{ background: isOpen ? '#f0f9ff' : '#f8fafc' }}
+              onClick={() => toggleExpand(out.id)}>
+              {/* 화살표 */}
+              <svg className="w-3 h-3 flex-shrink-0 transition-transform"
+                style={{ color: '#64748b', transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              {/* DB 아이콘 */}
+              <div className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
+                style={{ background: '#dbeafe' }}>
+                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="#2563eb">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                </svg>
+              </div>
+              {/* 테이블명 */}
+              <div className="flex-1 min-w-0">
+                <span className="text-[11px] font-semibold truncate block" style={{ color: '#0f172a' }}>
+                  {out.tableName || out.label}
+                </span>
+                {out.tableName && (
+                  <span className="text-[9px]" style={{ color: '#94a3b8' }}>{out.label}</span>
+                )}
+              </div>
+              {/* Write Mode 뱃지 */}
+              <span className="text-[9px] px-1.5 py-0.5 rounded font-medium flex-shrink-0"
+                style={{ background: wmc.bg, color: wmc.text }}>
+                {out.writeMode}
+              </span>
+              {/* 매핑 수 */}
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+                style={{
+                  background: out.mappingCount > 0 ? '#dcfce7' : '#f1f5f9',
+                  color: out.mappingCount > 0 ? '#16a34a' : '#94a3b8',
+                }}>
+                {out.mappingCount > 0 ? `${out.mappingCount}` : '0'}
+              </span>
+            </button>
+
+            {/* 아코디언 바디 */}
+            {isOpen && (
+              <div className="px-2.5 pb-2.5 pt-1.5 space-y-1.5"
+                style={{ background: '#ffffff', borderTop: '1px solid #e2e8f0' }}>
+                {/* 시각적 에디터 버튼 */}
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => onOpenMappingEditor?.(out.id)}
+                    className="flex items-center gap-1 text-[10px] px-2 py-1 rounded font-medium"
+                    style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}>
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    시각적 매핑 에디터
+                  </button>
+                </div>
+                {/* JSON textarea */}
+                <textarea
+                  value={getMappingJson(out.id)}
+                  onChange={e => handleMappingChange(out.id, e.target.value)}
+                  rows={8}
+                  spellCheck={false}
+                  placeholder='[{"sourceColumn": "col_a", "targetName": "col_b", "expression": "", "type": "VARCHAR"}]'
+                  className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2.5 py-2
+                    text-xs font-mono placeholder-[#94a3b8] focus:outline-none focus:border-[#2563eb] resize-y"
+                />
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      {/* Output 없을 때 — legacy JSON 폴백 (Output 미연결 상태에서도 편집 가능) */}
+      {connectedOutputs.length === 0 && (
+        <div className="space-y-1">
+          <label className="text-[10px]" style={{ color: '#94a3b8' }}>기본 매핑 (JSON)</label>
+          <textarea
+            value={typeof config.mappings === 'string'
+              ? config.mappings as string
+              : JSON.stringify(config.mappings ?? [], null, 2)}
+            onChange={e => onChange('mappings', e.target.value)}
+            rows={10}
+            spellCheck={false}
+            placeholder='[{"sourceColumn": "col_a", "targetName": "col_b", "expression": "", "type": "VARCHAR"}]'
+            className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2.5 py-2
+              text-xs font-mono placeholder-[#94a3b8] focus:outline-none focus:border-[#2563eb] resize-y"
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -492,6 +707,226 @@ function SortConfig({ config, onChange }: { config: Record<string, unknown>; onC
 }
 
 // ── Generic Config ────────────────────────────────────────────
+// ── T_LOOP 설정 패널 ──────────────────────────────────────────
+function LoopConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (k: string, v: unknown) => void }) {
+  const loopType   = (config.loopType   as string) || 'FOR'    // 'FOR' | 'WHILE'
+  const forSubType = (config.forSubType as string) || 'RANGE'  // 'RANGE' | 'LIST'
+  const loopVar    = (config.loopVar    as string) || ''
+
+  const set = (k: string, v: unknown) => onChange('__raw', { ...config, [k]: v })
+
+  const fromVal = (config.from as string) || ''
+  const toVal   = (config.to   as string) || ''
+
+  // yyyyMMdd 패턴 자동 감지
+  const isDateLike = (v: string) => /^(19|20)\d{6}$/.test(v)
+  const isDateMode = isDateLike(fromVal) || isDateLike(toVal)
+
+  // 프리뷰 계산
+  const preview = React.useMemo(() => {
+    if (loopType === 'WHILE') return null
+    if (forSubType === 'LIST') {
+      const vals = (config.listValues as string)?.split(',').map(v => v.trim()).filter(Boolean) ?? []
+      return vals.length ? `${vals.length}개 항목` : null
+    }
+    if (!fromVal || !toVal) return null
+    if (toVal.startsWith('context.'))   return `TO: ${toVal} (실행 시 동적 결정)`
+    if (fromVal.startsWith('context.')) return `FROM: ${fromVal} (실행 시 동적 결정)`
+    if (isDateMode) {
+      try {
+        const parseD = (s: string) => new Date(+s.slice(0,4), +s.slice(4,6)-1, +s.slice(6,8))
+        const sd = parseD(fromVal), ed = parseD(toVal)
+        if (isNaN(sd.getTime()) || isNaN(ed.getTime()) || sd > ed) return null
+        const step = parseInt(config.step as string) || 1
+        const unit = (config.stepUnit as string) || 'DAY'
+        let cnt = 0; const cur = new Date(sd)
+        while (cur <= ed && cnt < 1000) {
+          cnt++
+          if (unit === 'MONTH')     cur.setMonth(cur.getMonth() + step)
+          else if (unit === 'YEAR') cur.setFullYear(cur.getFullYear() + step)
+          else                      cur.setDate(cur.getDate() + step)
+        }
+        return `${cnt}회 반복`
+      } catch { return null }
+    }
+    const s = parseInt(fromVal), e = parseInt(toVal)
+    const st = parseInt(config.step as string) || 1
+    if (isNaN(s) || isNaN(e)) return null
+    if (st === 0) return '(step=0은 불가)'
+    const cnt = st > 0 ? Math.max(0, Math.floor((e - s) / st) + 1) : Math.max(0, Math.floor((s - e) / -st) + 1)
+    return `${cnt}회 반복`
+  }, [loopType, forSubType, fromVal, toVal, config.step, config.stepUnit, config.listValues, isDateMode])
+
+  const inputCls = "w-full px-2 py-1.5 rounded text-xs font-mono outline-none"
+  const inputSty = { border: '1px solid #d1d5db', background: '#f8fafc', color: '#0f172a' }
+
+  return (
+    <div className="space-y-3">
+
+      {/* ① Loop Type: FOR / WHILE */}
+      <div>
+        <label className="text-xs font-medium block mb-1" style={{ color: '#374151' }}>Loop Type</label>
+        <div className="flex gap-1">
+          {(['FOR', 'WHILE'] as const).map(t => (
+            <button key={t} onClick={() => set('loopType', t)}
+              className="flex-1 py-1 rounded text-[11px] font-medium transition-colors"
+              style={{
+                background: loopType === t ? '#fff7ed' : '#f8fafc',
+                border: `1px solid ${loopType === t ? '#fb923c' : '#e2e8f0'}`,
+                color: loopType === t ? '#ea580c' : '#64748b',
+              }}>
+              {t === 'FOR' ? 'For 문' : 'While 문'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ② 반복값 변수명 — FOR/WHILE 공통 */}
+      <div>
+        <label className="text-xs font-medium block mb-1" style={{ color: '#374151' }}>
+          반복값 변수명
+          {loopType === 'WHILE' && <span className="ml-1" style={{ color: '#94a3b8', fontWeight: 400 }}>(선택)</span>}
+        </label>
+        <input value={loopVar} onChange={e => set('loopVar', e.target.value)}
+          placeholder={loopType === 'FOR' ? (isDateMode ? 'BIZ_DT' : 'LOOP_INDEX') : 'ATTEMPT_NO'}
+          className={inputCls} style={inputSty} />
+        <div className="mt-1 px-2 py-1.5 rounded text-[10px]" style={{ background: '#f5f3ff', border: '1px solid #e9d5ff' }}>
+          <p style={{ color: '#6d28d9' }}>
+            Loop 컴포넌트가 자체적으로 생성하는 변수(<code style={{ background: '#ede9fe', padding: '0 3px', borderRadius: 3 }}>context.{loopVar || '변수명'})</code>
+          </p>
+          {/* <p className="mt-0.5" style={{ color: '#7c3aed' }}>
+            → tMap · SQL 등에서 <strong>context.{loopVar || '변수명'}</strong> 으로 참조하세요.
+          </p> */}
+          <p className="mt-0.5" style={{ color: '#94a3b8' }}>Context 변수(FUNCTION)와 별개로 변수 추가 필요 없음</p>
+        </div>
+      </div>
+
+      {/* ③-A FOR문 옵션 */}
+      {loopType === 'FOR' && (
+        <>
+          {/* 서브타입: 범위 / 목록 */}
+          <div className="flex gap-1">
+            {(['RANGE', 'LIST'] as const).map(t => (
+              <button key={t} onClick={() => set('forSubType', t)}
+                className="flex-1 py-1 rounded text-[11px] font-medium transition-colors"
+                style={{
+                  background: forSubType === t ? '#fff7ed' : '#f8fafc',
+                  border: `1px solid ${forSubType === t ? '#fb923c' : '#e2e8f0'}`,
+                  color: forSubType === t ? '#ea580c' : '#64748b',
+                }}>
+                {t === 'RANGE' ? '범위 (FROM ~ TO)' : '목록 (LIST)'}
+              </button>
+            ))}
+          </div>
+
+          {/* RANGE 입력 */}
+          {forSubType === 'RANGE' && (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] block mb-0.5" style={{ color: '#94a3b8' }}>FROM</label>
+                  <input value={fromVal} onChange={e => set('from', e.target.value)}
+                    placeholder="1 또는 20260101"
+                    className={inputCls} style={inputSty} />
+                </div>
+                <div>
+                  <label className="text-[10px] flex items-center gap-1 mb-0.5" style={{ color: '#94a3b8' }}>
+                    TO
+                    <span className="px-1 rounded" style={{ background: '#f0fdf4', color: '#16a34a', fontSize: '9px' }}>context.VAR 가능</span>
+                  </label>
+                  <input value={toVal} onChange={e => set('to', e.target.value)}
+                    placeholder="100 또는 20261231 또는 context.END_DT"
+                    className={inputCls} style={inputSty} />
+                </div>
+              </div>
+              <div className={`grid gap-2 ${isDateMode ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                <div>
+                  <label className="text-[10px] block mb-0.5" style={{ color: '#94a3b8' }}>STEP</label>
+                  <input value={(config.step as string) || '1'} onChange={e => set('step', e.target.value)}
+                    placeholder="1"
+                    className={inputCls} style={inputSty} />
+                </div>
+                {isDateMode && (
+                  <div>
+                    <label className="text-[10px] block mb-0.5" style={{ color: '#94a3b8' }}>단위</label>
+                    <select value={(config.stepUnit as string) || 'DAY'} onChange={e => set('stepUnit', e.target.value)}
+                      className={inputCls} style={inputSty}>
+                      <option value="DAY">일 (Day)</option>
+                      <option value="MONTH">월 (Month)</option>
+                      <option value="YEAR">년 (Year)</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+              {isDateMode && (
+                <p className="text-[10px] px-1" style={{ color: '#ea580c' }}>
+                  날짜 형식(yyyyMMdd) 자동 감지됨 — 날짜 산술로 처리됩니다
+                </p>
+              )}
+            </>
+          )}
+
+          {/* LIST 입력 */}
+          {forSubType === 'LIST' && (
+            <div>
+              <label className="text-[10px] block mb-0.5" style={{ color: '#94a3b8' }}>값 목록 (콤마 구분)</label>
+              <textarea value={(config.listValues as string) || ''}
+                onChange={e => set('listValues', e.target.value)}
+                rows={4} placeholder="20260101,20260201,20260301"
+                className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-[#ea580c] resize-y" />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ③-B WHILE문 옵션 */}
+      {loopType === 'WHILE' && (
+        <>
+          <ConnectionSelect
+            value={(config.connectionId as string) || ''}
+            onChange={v => set('connectionId', v)}
+          />
+          <div>
+            <label className="text-[10px] block mb-0.5" style={{ color: '#94a3b8' }}>
+              종료 조건 SQL <span style={{ color: '#ef4444' }}>*</span>
+            </label>
+            <textarea value={(config.conditionSql as string) || ''}
+              onChange={e => set('conditionSql', e.target.value)}
+              rows={3} placeholder={"SELECT COUNT(*) FROM queue WHERE status = 'PENDING'"}
+              className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-[#ea580c] resize-y" />
+            <p className="text-[10px] mt-0.5" style={{ color: '#94a3b8' }}>결과값이 0이면 루프를 종료합니다</p>
+          </div>
+          <div>
+            <label className="text-[10px] block mb-0.5" style={{ color: '#94a3b8' }}>최대 반복 횟수 (무한루프 방지)</label>
+            <input type="number" min="1" value={(config.maxIterations as string) || '1000'}
+              onChange={e => set('maxIterations', e.target.value)}
+              className={inputCls} style={inputSty} />
+          </div>
+        </>
+      )}
+
+      {/* 반복 횟수 프리뷰 */}
+      {preview && (
+        <div className="flex items-center gap-1.5 px-2 py-1.5 rounded"
+          style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}>
+          <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="#ea580c">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          <span className="text-[11px] font-medium" style={{ color: '#ea580c' }}>{preview}</span>
+        </div>
+      )}
+
+      {/* 연결 방법 안내 */}
+      <div className="px-2 py-2 rounded text-[10px] space-y-0.5" style={{ background: '#f8fafc', border: '1px solid #e2e8f0', color: '#64748b' }}>
+        <p className="font-medium" style={{ color: '#374151' }}>연결 방법</p>
+        <p>T_LOOP → <strong>TRIGGER</strong> 링크 → T_RUN_JOB (또는 T_JDBC_OUTPUT 등)</p>
+        <p>각 반복마다 하위 노드가 <code className="text-[#7c3aed]">context.{loopVar || 'LOOP_VAR'}</code> 값을 바꿔가며 실행됩니다.</p>
+      </div>
+    </div>
+  )
+}
+
 function GenericConfig({ config, type, onChange }: {
   config: Record<string, unknown>
   type: ComponentType
@@ -517,7 +952,7 @@ function GenericConfig({ config, type, onChange }: {
 }
 
 // ── Main PropertiesPanel ──────────────────────────────────────
-export default function PropertiesPanel({ node, onUpdate, onDelete }: Props) {
+export default function PropertiesPanel({ node, onUpdate, onDelete, allNodes, allEdges, onOpenMappingEditor }: Props) {
   if (!node) {
     return (
       <div className="w-full flex flex-col items-center justify-center"
@@ -553,10 +988,11 @@ export default function PropertiesPanel({ node, onUpdate, onDelete }: Props) {
       case 'T_JDBC_INPUT':    return <JdbcInputConfig config={config} onChange={handleChange} />
       case 'T_JDBC_OUTPUT':   return <JdbcOutputConfig config={config} onChange={handleChange} />
       case 'T_FILTER_ROW':    return <FilterConfig config={config} onChange={handleChange} />
-      case 'T_MAP':           return <MapConfig config={config} onChange={handleChange} />
+      case 'T_MAP':           return <MapConfig nodeId={node.id} config={config} onChange={handleChange} allNodes={allNodes} allEdges={allEdges} onOpenMappingEditor={onOpenMappingEditor} />
       case 'T_AGGREGATE_ROW': return <AggregateConfig config={config} onChange={handleChange} />
       case 'T_JOIN':          return <JoinConfig config={config} onChange={handleChange} />
       case 'T_SORT_ROW':      return <SortConfig config={config} onChange={handleChange} />
+      case 'T_LOOP':          return <LoopConfig config={config} onChange={handleChange} />
       default:                return <GenericConfig config={config} type={data.componentType} onChange={handleChange} />
     }
   }

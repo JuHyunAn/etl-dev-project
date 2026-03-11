@@ -27,6 +27,7 @@ import { Badge, Button, Spinner } from "../components/ui";
 import ComponentPalette from "../components/job/ComponentPalette";
 import PropertiesPanel from "../components/job/PropertiesPanel";
 import MappingEditorModal from "../components/job/MappingEditorModal";
+import { type MappingRow } from "../utils/mapping";
 import SchemaTree from "../components/job/SchemaTree";
 import AiAgentPanel from "../components/job/AiAgentPanel";
 import { nodeTypes } from "../components/job/CustomNodes";
@@ -34,6 +35,7 @@ import type {
   ComponentType,
   TriggerCondition,
   JobIR,
+  ContextVar,
   ExecutionResult,
   ColumnInfo,
   Schedule,
@@ -42,7 +44,7 @@ import type { AiGraphSpec, AiPatchSpec } from "../api/ai";
 import { buildAutoMappings } from "../utils/mapping";
 import Editor from "@monaco-editor/react";
 
-type BottomPanel = "sql" | "logs" | "rowlogs" | "summary" | "schedule" | null;
+type BottomPanel = "sql" | "logs" | "rowlogs" | "summary" | "workflow" | null;
 
 type EtlNodeData = {
   label: string;
@@ -104,7 +106,7 @@ function flowToIR(
   jobId: string,
   nodes: Node[],
   edges: Edge[],
-  context: Record<string, string> = {},
+  context: Record<string, ContextVar> = {},
 ): JobIR {
   return {
     id: jobId,
@@ -143,8 +145,62 @@ function flowToIR(
 // ── 컨텍스트 변수 패널 ──────────────────────────────────────────
 interface CtxVar {
   key: string;
-  value: string;
+  value: string;        // 직접값 또는 ${today('yyyyMMdd')} 함수 표현식
+  defaultValue: string; // 값 없을 때 사용되는 기본값
+  description: string;  // 설명
   saved?: boolean;
+}
+
+// 내장 함수 정의
+const CTX_FUNCTIONS = [
+  { id: "today",   label: "today(format)",        args: [{ label: "포맷", placeholder: "yyyyMMdd",       default: "yyyyMMdd" }] },
+  { id: "now",     label: "now(format)",           args: [{ label: "포맷", placeholder: "yyyyMMddHHmmss", default: "yyyyMMddHHmmss" }] },
+  { id: "uuid",    label: "uuid()",                args: [] },
+  { id: "dateAdd", label: "dateAdd(date, days)",   args: [{ label: "기준날짜", placeholder: "today", default: "today" }, { label: "더할 일수", placeholder: "-1", default: "-1" }] },
+  { id: "env",     label: "env(KEY)",              args: [{ label: "환경변수 키", placeholder: "ETL_ENV", default: "ETL_ENV" }] },
+] as const;
+
+function buildFnExpr(fnId: string, args: string[]): string {
+  if (fnId === "uuid") return "${uuid()}";
+  const filled = args.map((a) => `'${a}'`).join(", ");
+  return `\${${fnId}(${filled})}`;
+}
+
+function parseFnExpr(value: string): { fnId: string; args: string[] } | null {
+  const m = value.match(/^\$\{(\w+)\(([^)]*)\)\}$/);
+  if (!m) return null;
+  const fnId = m[1];
+  const rawArgs = m[2].split(",").map((s) => s.trim().replace(/^['"]|['"]$/g, ""));
+  return { fnId, args: rawArgs };
+}
+
+// 브라우저 사이드 함수 평가 (프리뷰용)
+function previewFnExpr(value: string): string {
+  const parsed = parseFnExpr(value);
+  if (!parsed) return value;
+  const { fnId, args } = parsed;
+  const now = new Date();
+  const fmt = (date: Date, f: string) => {
+    return f
+      .replace("yyyy", String(date.getFullYear()))
+      .replace("MM",   String(date.getMonth() + 1).padStart(2, "0"))
+      .replace("dd",   String(date.getDate()).padStart(2, "0"))
+      .replace("HH",   String(date.getHours()).padStart(2, "0"))
+      .replace("mm",   String(date.getMinutes()).padStart(2, "0"))
+      .replace("ss",   String(date.getSeconds()).padStart(2, "0"));
+  };
+  if (fnId === "today") return fmt(now, args[0] || "yyyyMMdd");
+  if (fnId === "now")   return fmt(now, args[0] || "yyyyMMddHHmmss");
+  if (fnId === "uuid")  return "xxxxxxxx-xxxx-4xxx-yxxx...";
+  if (fnId === "dateAdd") {
+    const base = args[0] === "today" || !args[0] ? now : new Date(
+      parseInt(args[0].slice(0,4)), parseInt(args[0].slice(4,6))-1, parseInt(args[0].slice(6,8))
+    );
+    const d = new Date(base); d.setDate(d.getDate() + parseInt(args[1] || "0"));
+    return fmt(d, "yyyyMMdd");
+  }
+  if (fnId === "env") return `[ENV:${args[0]}]`;
+  return value;
 }
 
 function ContextVarsPanel({
@@ -156,185 +212,248 @@ function ContextVarsPanel({
   onChange: (v: CtxVar[]) => void;
   onClose: () => void;
 }) {
-  const update = (i: number, field: "key" | "value", val: string) =>
+  const [fnPickerIdx, setFnPickerIdx] = React.useState<number | null>(null);
+  const [fnPickerId, setFnPickerId] = React.useState("today");
+  const [fnPickerArgs, setFnPickerArgs] = React.useState<string[]>([]);
+  const [expandedIdx, setExpandedIdx] = React.useState<number | null>(null);
+
+  const update = (i: number, field: keyof CtxVar, val: string) =>
     onChange(vars.map((v, idx) => (idx === i ? { ...v, [field]: val } : v)));
 
   const save = (i: number) => {
     if (!vars[i].key.trim()) return;
     onChange(vars.map((v, idx) => (idx === i ? { ...v, saved: true } : v)));
+    setFnPickerIdx(null);
+    setExpandedIdx(null);
   };
 
-  const edit = (i: number) =>
+  const edit = (i: number) => {
     onChange(vars.map((v, idx) => (idx === i ? { ...v, saved: false } : v)));
+    const parsed = parseFnExpr(vars[i].value);
+    if (parsed) {
+      setFnPickerIdx(i);
+      setFnPickerId(parsed.fnId);
+      setFnPickerArgs(parsed.args);
+    }
+  };
 
   const remove = (i: number) => onChange(vars.filter((_, idx) => idx !== i));
-  const add = () => onChange([...vars, { key: "", value: "", saved: false }]);
+  const add = () => onChange([...vars, { key: "", value: "", defaultValue: "", description: "", saved: false }]);
+
+  const openFnPicker = (i: number) => {
+    const parsed = parseFnExpr(vars[i].value);
+    const defFn = CTX_FUNCTIONS[0];
+    setFnPickerIdx(i);
+    setFnPickerId(parsed?.fnId ?? defFn.id);
+    setFnPickerArgs(parsed?.args ?? defFn.args.map((a) => a.default));
+  };
+
+  const applyFn = (i: number) => {
+    const expr = buildFnExpr(fnPickerId, fnPickerArgs);
+    onChange(vars.map((v, idx) => (idx === i ? { ...v, value: expr } : v)));
+    setFnPickerIdx(null);
+  };
+
+  const selectedFn = CTX_FUNCTIONS.find((f) => f.id === fnPickerId) ?? CTX_FUNCTIONS[0];
 
   return (
     <div
-      className="w-[30rem] rounded-lg shadow-xl"
+      className="w-[28rem] rounded-lg shadow-xl"
       style={{ border: "1px solid #e2e8f0", background: "#ffffff" }}
     >
+      {/* 헤더 */}
       <div
         className="flex items-center justify-between px-3 py-2 rounded-t-lg"
         style={{ borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}
       >
         <div className="flex items-center gap-1.5">
-          <svg
-            className="w-3.5 h-3.5 text-[#ef4444]"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
-            />
+          <svg className="w-3.5 h-3.5 text-[#ef4444]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
           </svg>
-          <span className="text-xs font-semibold text-[#0f172a]">
-            컨텍스트 변수
-          </span>
-          <span className="text-[9px] text-[#94a3b8]">
-            context.변수명 으로 참조
-          </span>
+          <span className="text-xs font-semibold text-[#0f172a]">컨텍스트 변수</span>
+          <span className="text-[9px] text-[#94a3b8]">context.변수명 으로 참조</span>
         </div>
-        <button
-          onClick={onClose}
-          className="text-[#94a3b8] hover:text-[#64748b] text-xs"
-        >
-          ✕
-        </button>
+        <button onClick={onClose} className="text-[#94a3b8] hover:text-[#64748b] text-xs">✕</button>
       </div>
 
-      <div className="px-2 py-2 space-y-1.5 max-h-72 overflow-y-auto">
+      {/* 변수 목록 */}
+      <div className="px-2 py-2 space-y-1.5 max-h-80 overflow-y-auto">
         {vars.length === 0 && (
-          <p className="text-[10px] text-[#94a3b8] text-center py-4">
-            변수가 없습니다. 아래 추가 버튼을 클릭하세요.
-          </p>
+          <p className="text-[10px] text-[#94a3b8] text-center py-4">변수가 없습니다. 아래 추가 버튼을 클릭하세요.</p>
         )}
-        {vars.map((v, i) =>
-          v.saved ? (
-            /* 저장된 행: 읽기 전용 표시 + 편집/삭제 버튼 */
-            <div
-              key={i}
-              className="flex items-center gap-2 px-2 py-1.5 rounded group"
-              style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}
-            >
-              <span className="font-mono text-[11px] text-[#ef4444] truncate">
-                context.
-              </span>
-              <span className="font-mono text-[11px] text-[#0f172a] truncate flex-1">
-                {v.key}
-              </span>
-              <span className="text-[#94a3b8] text-[10px] flex-shrink-0">
-                =
-              </span>
-              <span className="font-mono text-[11px] text-[#16a34a] truncate flex-1">
-                {v.value || (
-                  <span className="text-[#94a3b8] italic">empty</span>
+        {vars.map((v, i) => {
+          const isFnVal = v.value.startsWith("${") && v.value.endsWith("}");
+          const preview = isFnVal ? previewFnExpr(v.value) : null;
+
+          return v.saved ? (
+            /* ─ 저장된 행 ─ */
+            <div key={i} className="rounded group" style={{ border: "1px solid #e2e8f0" }}>
+              <div className="flex items-center gap-2 px-2 py-1.5" style={{ background: "#f8fafc" }}>
+                <span className="font-mono text-[11px] text-[#ef4444] flex-shrink-0">context.</span>
+                <span className="font-mono text-[11px] text-[#0f172a] flex-1 truncate">{v.key}</span>
+                <span className="text-[#94a3b8] text-[10px] flex-shrink-0">=</span>
+                {isFnVal ? (
+                  <span className="flex items-center gap-1 flex-1 min-w-0">
+                    <span className="text-[9px] px-1 rounded font-mono flex-shrink-0"
+                      style={{ background: "#f3e8ff", color: "#7c3aed" }}>fn</span>
+                    <span className="font-mono text-[11px] text-[#7c3aed] truncate">{v.value}</span>
+                    <span className="text-[9px] text-[#94a3b8] flex-shrink-0">→ {preview}</span>
+                  </span>
+                ) : v.value ? (
+                  <span className="font-mono text-[11px] text-[#16a34a] flex-1 truncate">{v.value}</span>
+                ) : v.defaultValue ? (
+                  <span className="font-mono text-[11px] text-[#94a3b8] italic flex-1 truncate">(기본값: {v.defaultValue})</span>
+                ) : (
+                  <span className="text-[11px] text-[#94a3b8] italic flex-1">empty</span>
                 )}
-              </span>
-              <button
-                onClick={() => edit(i)}
-                title="수정"
-                className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded
-                text-[#94a3b8] hover:text-[#2563eb] hover:bg-[#eff6ff] text-[10px] transition-colors opacity-0 group-hover:opacity-100"
-              >
-                ✎
-              </button>
-              <button
-                onClick={() => remove(i)}
-                title="삭제"
-                className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded
-                text-[#94a3b8] hover:text-[#dc2626] hover:bg-[#fef2f2] text-xs transition-colors"
-              >
-                ✕
-              </button>
+                {v.description && (
+                  <span className="text-[10px] text-[#64748b] truncate max-w-[80px]" title={v.description}>{v.description}</span>
+                )}
+                <button onClick={() => edit(i)} title="수정"
+                  className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-[#94a3b8] hover:text-[#2563eb] hover:bg-[#eff6ff] text-[10px] transition-colors opacity-0 group-hover:opacity-100">✎</button>
+                <button onClick={() => remove(i)} title="삭제"
+                  className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-[#94a3b8] hover:text-[#dc2626] hover:bg-[#fef2f2] text-xs transition-colors">✕</button>
+              </div>
             </div>
           ) : (
-            /* 편집 행: 입력 필드 + 저장 버튼 */
-            <div key={i} className="flex items-center gap-2">
-              <input
-                value={v.key}
-                onChange={(e) => update(i, "key", e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && save(i)}
-                placeholder="변수명 (batch_id)"
-                autoFocus
-                className="w-[44%] min-w-0 bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1.5
-                text-[11px] placeholder-[#94a3b8] focus:outline-none focus:border-[#ef4444] font-mono"
-              />
-              <span className="text-[#94a3b8] text-[10px] flex-shrink-0">
-                =
-              </span>
-              <input
-                value={v.value}
-                onChange={(e) => update(i, "value", e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && save(i)}
-                placeholder="값"
-                className="w-[44%] min-w-0 bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1.5
-                text-[11px] placeholder-[#94a3b8] focus:outline-none focus:border-[#ef4444] font-mono"
-              />
-              {v.key.trim() || v.value.trim() ? (
-                <button
-                  onClick={() => save(i)}
-                  title="저장"
-                  className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-xs font-bold
-                  text-[#16a34a] hover:bg-[#f0fdf4] transition-colors"
-                >
-                  ✓
-                </button>
-              ) : (
-                <button
-                  onClick={() => remove(i)}
-                  title="취소"
-                  className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-xs
-                  text-[#94a3b8] hover:text-[#dc2626] hover:bg-[#fef2f2] transition-colors"
-                >
-                  ✕
-                </button>
+            /* ─ 편집 행 ─ */
+            <div key={i} className="rounded space-y-1.5 p-2" style={{ border: "1px solid #d1d5db", background: "#fafafa" }}>
+              {/* 변수명 + 값 행 */}
+              <div className="flex items-center gap-1.5">
+                <input value={v.key} onChange={(e) => update(i, "key", e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && save(i)}
+                  placeholder="변수명 (BIZ_DT)" autoFocus
+                  className="w-[38%] min-w-0 bg-white border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1
+                  text-[11px] placeholder-[#94a3b8] focus:outline-none focus:border-[#ef4444] font-mono" />
+                <span className="text-[#94a3b8] text-[10px] flex-shrink-0">=</span>
+                {/* 함수 픽커가 열려있지 않을 때 직접 입력 */}
+                {fnPickerIdx !== i ? (
+                  <>
+                    <input value={v.value} onChange={(e) => update(i, "value", e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && save(i)}
+                      placeholder="값 또는 ${today()}"
+                      className="flex-1 min-w-0 bg-white border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1
+                      text-[11px] placeholder-[#94a3b8] focus:outline-none focus:border-[#ef4444] font-mono" />
+                    <button onClick={() => openFnPicker(i)} title="내장 함수 삽입"
+                      className="flex-shrink-0 px-1.5 py-1 rounded text-[10px] font-mono font-bold transition-colors"
+                      style={{ background: "#fef2f2", border: "1px solid #fca5a5", color: "#dc2626" }}>
+                      fn
+                    </button>
+                  </>
+                ) : (
+                  <span className="flex-1 text-[10px] text-[#232b37] italic">함수 선택 중...</span>
+                )}
+                {v.key.trim() || v.value.trim() ? (
+                  <button onClick={() => save(i)} title="저장"
+                    className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-xs font-bold text-[#16a34a] hover:bg-[#f0fdf4] transition-colors">✓</button>
+                ) : (
+                  <button onClick={() => remove(i)} title="취소"
+                    className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-xs text-[#94a3b8] hover:text-[#dc2626] hover:bg-[#fef2f2] transition-colors">✕</button>
+                )}
+              </div>
+
+              {/* 함수 픽커 팝업 */}
+              {fnPickerIdx === i && (
+                <div className="rounded p-2 space-y-1.5" style={{ background: "#f1f5f9", border: "1px solid #e2e8f0" }}>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <select value={fnPickerId}
+                      onChange={(e) => {
+                        const fn = CTX_FUNCTIONS.find((f) => f.id === e.target.value) ?? CTX_FUNCTIONS[0];
+                        setFnPickerId(fn.id);
+                        setFnPickerArgs(fn.args.map((a) => a.default));
+                      }}
+                      className="px-2 py-1 rounded text-[11px] font-mono outline-none"
+                      style={{ border: "1px solid #d1d5db", background: "#ffffff", color: "#dc2626" }}>
+                      {CTX_FUNCTIONS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                    </select>
+                    {selectedFn.args.map((arg, ai) => (
+                      <input key={ai} value={fnPickerArgs[ai] ?? arg.default}
+                        onChange={(e) => {
+                          const next = [...fnPickerArgs]; next[ai] = e.target.value; setFnPickerArgs(next);
+                        }}
+                        placeholder={arg.placeholder}
+                        className="px-2 py-1 rounded text-[11px] font-mono outline-none"
+                        style={{ border: "1px solid #d1d5db", background: "#ffffff", color: "#374151", width: 150 }} />
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-[#64748b]">
+                      → <span className="font-mono text-[#16a34a]">
+                        {previewFnExpr(buildFnExpr(fnPickerId, fnPickerArgs))}
+                      </span>
+                    </span>
+                    <button onClick={() => applyFn(i)}
+                      className="ml-auto px-2 py-0.5 rounded text-[10px] font-medium text-white"
+                      style={{ background: "#232b37" }}>
+                      적용
+                    </button>
+                    <button onClick={() => setFnPickerIdx(null)}
+                      className="px-2 py-0.5 rounded text-[10px] text-[#64748b]"
+                      style={{ border: "1px solid #e2e8f0" }}>
+                      취소
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 기본값 + 설명 (펼침) */}
+              {/* <button onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
+                className="text-[9px] text-[#94a3b8] hover:text-[#64748b] flex items-center gap-0.5">
+                {expandedIdx === i ? "▼" : "▶"} 기본값/설명
+              </button> */}
+              {expandedIdx === i && (
+                <div className="flex gap-1.5">
+                  <div className="flex-1">
+                    <label className="text-[9px] text-[#94a3b8] block mb-0.5">기본값 (값 없을 때 사용)</label>
+                    <input value={v.defaultValue} onChange={(e) => update(i, "defaultValue", e.target.value)}
+                      placeholder="20260101 또는 ${today()}"
+                      className="w-full bg-white border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1
+                      text-[11px] placeholder-[#94a3b8] focus:outline-none focus:border-[#64748b] font-mono" />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[9px] text-[#94a3b8] block mb-0.5">설명</label>
+                    <input value={v.description} onChange={(e) => update(i, "description", e.target.value)}
+                      placeholder="배치 처리 날짜"
+                      className="w-full bg-white border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1
+                      text-[11px] placeholder-[#94a3b8] focus:outline-none focus:border-[#64748b]" />
+                  </div>
+                </div>
               )}
             </div>
-          ),
-        )}
+          );
+        })}
       </div>
 
-      <div
-        className="px-2 pb-2 pt-2"
-        style={{ borderTop: "1px solid #e2e8f0" }}
-      >
-        <button
-          onClick={add}
-          className="w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded
-            text-[10px] font-medium transition-colors"
-          style={{
-            background: "#fef2f2",
-            border: "1px solid #fca5a5",
-            color: "#dc2626",
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLElement).style.background = "#fee2e2";
-            (e.currentTarget as HTMLElement).style.borderColor = "#dc2626";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLElement).style.background = "#fef2f2";
-            (e.currentTarget as HTMLElement).style.borderColor = "#fca5a5";
-          }}
-        >
+      {/* 하단 버튼 */}
+      <div className="px-2 pb-2 pt-2" style={{ borderTop: "1px solid #e2e8f0" }}>
+        <button onClick={add}
+          className="w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded text-[10px] font-medium transition-colors"
+          style={{ background: "#fef2f2", border: "1px solid #fca5a5", color: "#dc2626" }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#fee2e2"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "#fef2f2"; }}>
           + 변수 추가
         </button>
-        <p className="mt-1.5 text-[9px] text-[#94a3b8] text-center">
-          SQL/쿼리에서 <code className="text-[#7c3aed]">context.변수명</code>{" "}
-          으로 참조
+        <p className="mt-1.5 text-[10px] text-[#242c38] text-center">
+          SQL/쿼리에서 <code className="text-[#dc2626]">context.변수명</code> 으로 참조 &nbsp;|&nbsp;
+          <span className="text-[#dc2626]">fn</span> 버튼으로 내장 함수 삽입
         </p>
       </div>
     </div>
   );
 }
 
-function buildCtxMap(contextVars: { key: string; value: string }[]): Record<string, string> {
-  return Object.fromEntries(contextVars.filter((v) => v.key.trim()).map((v) => [v.key.trim(), v.value]));
+function buildCtxMap(contextVars: CtxVar[]): Record<string, ContextVar> {
+  return Object.fromEntries(
+    contextVars.filter((v) => v.key.trim()).map((v) => [
+      v.key.trim(),
+      {
+        value: v.value,
+        ...(v.defaultValue?.trim() ? { defaultValue: v.defaultValue.trim() } : {}),
+        ...(v.description?.trim()  ? { description:  v.description.trim()  } : {}),
+      } as ContextVar,
+    ])
+  );
 }
 
 export default function JobDesignerPage() {
@@ -367,6 +486,7 @@ export default function JobDesignerPage() {
   const [mappingTarget, setMappingTarget] = useState<{
     nodeId: string;
     nodeLabel: string;
+    outputNodeId?: string;  // 특정 Output 대상 매핑 시 설정
   } | null>(null);
   const [schemaTreeCollapsed, setSchemaTreeCollapsed] = useState(false);
   const [schemaHeight, setSchemaHeight] = useState(240);
@@ -442,11 +562,17 @@ export default function JobDesignerPage() {
           }
           if (ir.context && Object.keys(ir.context).length > 0) {
             setContextVars(
-              Object.entries(ir.context).map(([key, value]) => ({
-                key,
-                value,
-                saved: true,
-              })),
+              Object.entries(ir.context).map(([key, v]) => {
+                // 이전 포맷(string) 및 새 포맷(ContextVar object) 모두 처리
+                const cv = typeof v === "string" ? { value: v } : v;
+                return {
+                  key,
+                  value:        cv.value        ?? "",
+                  defaultValue: cv.defaultValue  ?? "",
+                  description:  cv.description   ?? "",
+                  saved: true,
+                };
+              }),
             );
           }
         } catch {}
@@ -864,7 +990,11 @@ export default function JobDesignerPage() {
       const ir = flowToIR(jobId, nodes, edges, ctxMap);
       await jobsApi.update(projectId!, jobId, { irJson: JSON.stringify(ir) });
 
-      const result = await executionApi.run(jobId, ctxMap, previewMode);
+      // 실행 API는 runtime context로 string 값만 전달 (value가 있는 것만)
+      const runtimeCtx: Record<string, string> = Object.fromEntries(
+        Object.entries(ctxMap).filter(([, v]) => v.value.trim()).map(([k, v]) => [k, v.value])
+      );
+      const result = await executionApi.run(jobId, runtimeCtx, previewMode);
       setExecutionResult(result);
       useAppStore.getState().setLastExecution(result);
 
@@ -1249,10 +1379,10 @@ export default function JobDesignerPage() {
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth={1.5}
-                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                d="M13 10V3L4 14h7v7l9-11h-7z"
               />
             </svg>
-            Schedule
+            Actions
           </Button>
 
           <div className="h-4 w-px bg-[#e2e8f0]" />
@@ -1712,7 +1842,7 @@ export default function JobDesignerPage() {
                         : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
                     }`}
                 >
-                  Schedule
+                  Actions
                 </button>
                 <button
                   onClick={() => setBottomPanel(null)}
@@ -2159,6 +2289,13 @@ export default function JobDesignerPage() {
                   handleUpdateNode(id, patch as Partial<EtlNodeData>)
                 }
                 onDelete={handleDeleteNode}
+                allNodes={nodes}
+                allEdges={edges}
+                onOpenMappingEditor={(outputNodeId) => {
+                  if (!selectedNode) return;
+                  const d = selectedNode.data as EtlNodeData;
+                  setMappingTarget({ nodeId: selectedNode.id, nodeLabel: d.label, outputNodeId });
+                }}
               />
             ) : (
               <div className="flex flex-col items-center justify-center flex-1">
@@ -2271,29 +2408,17 @@ export default function JobDesignerPage() {
           nodeLabel={mappingTarget.nodeLabel}
           nodes={nodes}
           edges={edges}
-          currentMappings={(() => {
+          initialOutputNodeId={mappingTarget.outputNodeId}
+          currentMappingsByOutput={(() => {
             const node = nodes.find((n) => n.id === mappingTarget.nodeId);
-            const d = node?.data as EtlNodeData | undefined;
-            const raw = d?.config?.mappings;
-            if (Array.isArray(raw)) return raw as never[];
-            if (typeof raw === "string") {
-              try {
-                return JSON.parse(raw);
-              } catch {
-                return [];
-              }
-            }
-            return [];
+            const cfg = (node?.data as EtlNodeData)?.config ?? {};
+            return (cfg.outputMappings ?? {}) as Record<string, MappingRow[]>;
           })()}
-          onApply={(mappings) => {
+          onApply={(allMappings) => {
+            const node = nodes.find((n) => n.id === mappingTarget.nodeId);
+            const existingConfig = (node?.data as EtlNodeData)?.config ?? {};
             handleUpdateNode(mappingTarget.nodeId, {
-              config: {
-                ...((
-                  nodes.find((n) => n.id === mappingTarget.nodeId)
-                    ?.data as EtlNodeData
-                )?.config ?? {}),
-                mappings,
-              },
+              config: { ...existingConfig, outputMappings: allMappings },
             });
           }}
           onClose={() => setMappingTarget(null)}
@@ -2361,7 +2486,7 @@ function SchedulePanel({ jobId }: { jobId: string }) {
     <div className="h-full overflow-y-auto px-4 py-3" style={{ color: "#c9d1d9" }}>
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#8b949e" }}>
-          이 Job의 스케줄 ({schedules.length})
+          이 Job의 워크플로우 ({schedules.length})
         </p>
         <div className="flex gap-2">
           <button
@@ -2369,14 +2494,14 @@ function SchedulePanel({ jobId }: { jobId: string }) {
             className="text-xs px-2.5 py-1 rounded"
             style={{ background: "#21262d", border: "1px solid #30363d", color: "#f0883e" }}
           >
-            + Quick Schedule
+            Quick Workflow 추가
           </button>
           <button
             onClick={() => navigate("/schedules")}
             className="text-xs px-2.5 py-1 rounded"
             style={{ background: "#21262d", border: "1px solid #30363d", color: "#58a6ff" }}
           >
-            스케줄러 탭 →
+            Actions 탭 이동
           </button>
         </div>
       </div>

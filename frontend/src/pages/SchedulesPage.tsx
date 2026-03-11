@@ -3,8 +3,25 @@ import { useNavigate } from "react-router-dom";
 import { schedulesApi, projectsApi, jobsApi } from "../api";
 import { Spinner } from "../components/ui";
 import type {
-  Schedule, ScheduleStep, ScheduleExecutionDetail, Job, ScheduleCreateRequest,
+  Schedule, ScheduleStep, ScheduleExecutionDetail, Job, ScheduleCreateRequest, ContextVar,
 } from "../types";
+
+// Job의 irJson에서 context 변수 목록 추출
+function getJobContextVars(job: Job | undefined): { key: string; defaultValue: string; description: string }[] {
+  if (!job?.irJson) return [];
+  try {
+    const ir = JSON.parse(job.irJson);
+    if (!ir.context) return [];
+    return Object.entries(ir.context as Record<string, string | ContextVar>).map(([key, v]) => {
+      const cv = typeof v === "string" ? { value: v } : v;
+      return {
+        key,
+        defaultValue: (cv as ContextVar).defaultValue ?? (cv as ContextVar).value ?? "",
+        description:  (cv as ContextVar).description ?? "",
+      };
+    });
+  } catch { return []; }
+}
 
 // ─── 유틸 ─────────────────────────────────────────────────────────────────────
 function fmtDate(iso?: string) {
@@ -291,16 +308,20 @@ function SettingsTab({
   const [alertCondition, setAlertCondition] = useState(schedule.alertCondition ?? "NONE");
   const [alertChannel, setAlertChannel] = useState(schedule.alertChannel ?? "");
   const [steps, setSteps] = useState(
-    schedule.steps.map((s) => ({
-      jobId: s.jobId, stepOrder: s.stepOrder,
-      // dependsOnStepId(UUID) → 해당 step의 stepOrder로 변환
-      dependsOnStepOrder: s.dependsOnStepId
-        ? (schedule.steps.find((x) => x.id === s.dependsOnStepId)?.stepOrder ?? null)
-        : null,
-      runCondition: s.runCondition,
-      timeoutSeconds: s.timeoutSeconds, retryCount: s.retryCount,
-      retryDelaySeconds: s.retryDelaySeconds, enabled: s.enabled,
-    }))
+    schedule.steps.map((s) => {
+      let contextOverrides: Record<string, string> = {};
+      try { contextOverrides = JSON.parse(s.contextOverrides || "{}"); } catch {}
+      return {
+        jobId: s.jobId, stepOrder: s.stepOrder,
+        dependsOnStepOrder: s.dependsOnStepId
+          ? (schedule.steps.find((x) => x.id === s.dependsOnStepId)?.stepOrder ?? null)
+          : null,
+        runCondition: s.runCondition,
+        timeoutSeconds: s.timeoutSeconds, retryCount: s.retryCount,
+        retryDelaySeconds: s.retryDelaySeconds, enabled: s.enabled,
+        contextOverrides,
+      };
+    })
   );
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
@@ -308,7 +329,7 @@ function SettingsTab({
 
   const addStep = () => setSteps((s) => [
     ...s,
-    { jobId: "", stepOrder: s.length + 1, dependsOnStepOrder: null, runCondition: "ON_SUCCESS", timeoutSeconds: 3600, retryCount: 0, retryDelaySeconds: 60, enabled: true },
+    { jobId: "", stepOrder: s.length + 1, dependsOnStepOrder: null, runCondition: "ON_SUCCESS", timeoutSeconds: 3600, retryCount: 0, retryDelaySeconds: 60, enabled: true, contextOverrides: {} },
   ]);
   const removeStep = (i: number) => setSteps((s) => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, stepOrder: idx + 1 })));
 
@@ -323,15 +344,20 @@ function SettingsTab({
         timezone,
         alertCondition,
         alertChannel: alertChannel.trim() || undefined,
-        steps: steps.filter((s) => s.jobId).map((s) => ({
-          jobId: s.jobId,
-          stepOrder: s.stepOrder,
-          dependsOnStepOrder: s.dependsOnStepOrder ?? undefined,
-          runCondition: s.runCondition,
-          timeoutSeconds: s.timeoutSeconds,
-          retryCount: s.retryCount,
-          retryDelaySeconds: s.retryDelaySeconds,
-        })),
+        steps: steps.filter((s) => s.jobId).map((s) => {
+          // 빈 값은 제외하고 JSON 직렬화
+          const overrides = Object.fromEntries(Object.entries(s.contextOverrides).filter(([, v]) => v.trim()));
+          return {
+            jobId: s.jobId,
+            stepOrder: s.stepOrder,
+            dependsOnStepOrder: s.dependsOnStepOrder ?? undefined,
+            runCondition: s.runCondition,
+            timeoutSeconds: s.timeoutSeconds,
+            retryCount: s.retryCount,
+            retryDelaySeconds: s.retryDelaySeconds,
+            contextOverrides: Object.keys(overrides).length > 0 ? JSON.stringify(overrides) : undefined,
+          };
+        }),
       });
       onSaved(updated);
       setSaved(true);
@@ -398,59 +424,103 @@ function SettingsTab({
           </button>
         </div>
         {steps.length === 0 && <p className="text-xs" style={{ color: "#94a3b8" }}>Step이 없습니다.</p>}
-        {steps.map((step, i) => (
-          <div key={i} className="p-3 rounded-lg space-y-2" style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono w-4 text-center flex-shrink-0" style={{ color: "#94a3b8" }}>{i + 1}</span>
-              <select value={step.jobId}
-                onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, jobId: e.target.value } : x))}
-                className="flex-1 px-2 py-1.5 rounded text-xs outline-none"
-                style={{ border: "1px solid #d1d5db", background: "#ffffff", color: "#0f172a" }}>
-                <option value="">Job 선택</option>
-                {allJobs.map((j) => <option key={j.id} value={j.id}>{j.name}</option>)}
-              </select>
-              <button onClick={() => removeStep(i)} className="text-xs" style={{ color: "#ef4444" }}>✕</button>
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              <div className="flex-1 min-w-[120px]">
-                <label className="text-[10px]" style={{ color: "#94a3b8" }}>Upstream Step</label>
-                <select value={step.dependsOnStepOrder ?? ""}
-                  onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, dependsOnStepOrder: e.target.value ? Number(e.target.value) : null } : x))}
-                  className="w-full px-2 py-1 rounded text-xs outline-none mt-0.5"
+        {steps.map((step, i) => {
+          const selectedJob = allJobs.find((j) => j.id === step.jobId);
+          const ctxVars = getJobContextVars(selectedJob);
+          const hasCtxVars = ctxVars.length > 0;
+
+          return (
+            <div key={i} className="rounded-lg space-y-2" style={{ border: "1px solid #e2e8f0", overflow: "hidden" }}>
+              {/* Step 헤더 */}
+              <div className="flex items-center gap-2 px-3 pt-3 pb-2" style={{ background: "#f8fafc" }}>
+                <span className="text-xs font-mono w-4 text-center flex-shrink-0" style={{ color: "#94a3b8" }}>{i + 1}</span>
+                <select value={step.jobId}
+                  onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, jobId: e.target.value, contextOverrides: {} } : x))}
+                  className="flex-1 px-2 py-1.5 rounded text-xs outline-none"
                   style={{ border: "1px solid #d1d5db", background: "#ffffff", color: "#0f172a" }}>
-                  <option value="">없음</option>
-                  {steps.filter((_, idx) => idx < i).map((s, idx) => (
-                    <option key={idx} value={s.stepOrder}>Step {s.stepOrder}</option>
-                  ))}
+                  <option value="">Job 선택</option>
+                  {allJobs.map((j) => <option key={j.id} value={j.id}>{j.name}</option>)}
                 </select>
+                <button onClick={() => removeStep(i)} className="text-xs" style={{ color: "#ef4444" }}>✕</button>
               </div>
-              <div className="flex-1 min-w-[110px]">
-                <label className="text-[10px]" style={{ color: step.dependsOnStepOrder ? "#94a3b8" : "#cbd5e1" }}>Run Condition</label>
-                <select value={step.runCondition}
-                  disabled={!step.dependsOnStepOrder}
-                  onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, runCondition: e.target.value as "ON_SUCCESS" | "ON_FAILURE" | "ON_COMPLETE" } : x))}
-                  className="w-full px-2 py-1 rounded text-xs outline-none mt-0.5"
-                  style={{
-                    border: "1px solid #e2e8f0",
-                    background: step.dependsOnStepOrder ? "#ffffff" : "#f8fafc",
-                    color: step.dependsOnStepOrder ? "#0f172a" : "#94a3b8",
-                    cursor: step.dependsOnStepOrder ? "auto" : "not-allowed",
-                  }}>
-                  <option value="ON_SUCCESS">ON_SUCCESS</option>
-                  <option value="ON_FAILURE">ON_FAILURE</option>
-                  <option value="ON_COMPLETE">ON_COMPLETE</option>
-                </select>
+              {/* Step 옵션 */}
+              <div className="flex gap-2 flex-wrap px-3">
+                <div className="flex-1 min-w-[120px]">
+                  <label className="text-[10px]" style={{ color: "#94a3b8" }}>Upstream Step</label>
+                  <select value={step.dependsOnStepOrder ?? ""}
+                    onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, dependsOnStepOrder: e.target.value ? Number(e.target.value) : null } : x))}
+                    className="w-full px-2 py-1 rounded text-xs outline-none mt-0.5"
+                    style={{ border: "1px solid #d1d5db", background: "#ffffff", color: "#0f172a" }}>
+                    <option value="">없음</option>
+                    {steps.filter((_, idx) => idx < i).map((s, idx) => (
+                      <option key={idx} value={s.stepOrder}>Step {s.stepOrder}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex-1 min-w-[110px]">
+                  <label className="text-[10px]" style={{ color: step.dependsOnStepOrder ? "#94a3b8" : "#cbd5e1" }}>Run Condition</label>
+                  <select value={step.runCondition}
+                    disabled={!step.dependsOnStepOrder}
+                    onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, runCondition: e.target.value as "ON_SUCCESS" | "ON_FAILURE" | "ON_COMPLETE" } : x))}
+                    className="w-full px-2 py-1 rounded text-xs outline-none mt-0.5"
+                    style={{
+                      border: "1px solid #e2e8f0",
+                      background: step.dependsOnStepOrder ? "#ffffff" : "#f8fafc",
+                      color: step.dependsOnStepOrder ? "#0f172a" : "#94a3b8",
+                      cursor: step.dependsOnStepOrder ? "auto" : "not-allowed",
+                    }}>
+                    <option value="ON_SUCCESS">ON_SUCCESS</option>
+                    <option value="ON_FAILURE">ON_FAILURE</option>
+                    <option value="ON_COMPLETE">ON_COMPLETE</option>
+                  </select>
+                </div>
+                <div style={{ width: 70 }}>
+                  <label className="text-[10px]" style={{ color: "#94a3b8" }}>Retry</label>
+                  <input type="number" min={0} max={5} value={step.retryCount}
+                    onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, retryCount: parseInt(e.target.value) || 0 } : x))}
+                    className="w-full px-2 py-1 rounded text-xs outline-none mt-0.5"
+                    style={{ border: "1px solid #d1d5db", background: "#ffffff", color: "#0f172a" }} />
+                </div>
               </div>
-              <div style={{ width: 70 }}>
-                <label className="text-[10px]" style={{ color: "#94a3b8" }}>Retry</label>
-                <input type="number" min={0} max={5} value={step.retryCount}
-                  onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, retryCount: parseInt(e.target.value) || 0 } : x))}
-                  className="w-full px-2 py-1 rounded text-xs outline-none mt-0.5"
-                  style={{ border: "1px solid #d1d5db", background: "#ffffff", color: "#0f172a" }} />
-              </div>
+              {/* Context Overrides */}
+              {step.jobId && (
+                <div className="px-3 pb-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[10px] font-medium" style={{ color: "#64748b" }}>
+                      Context Overrides
+                      {!hasCtxVars && <span className="ml-1 font-normal" style={{ color: "#94a3b8" }}>(이 Job에 정의된 context 변수 없음)</span>}
+                    </label>
+                  </div>
+                  {hasCtxVars ? (
+                    <div className="space-y-1">
+                      {ctxVars.map(({ key, defaultValue, description }) => (
+                        <div key={key} className="flex items-center gap-2">
+                          <div className="flex items-center gap-1 min-w-[140px] flex-shrink-0">
+                            <span className="font-mono text-[10px]" style={{ color: "#ef4444" }}>context.</span>
+                            <span className="font-mono text-[10px] font-medium" style={{ color: "#0f172a" }}>{key}</span>
+                          </div>
+                          <input
+                            value={step.contextOverrides[key] ?? ""}
+                            onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i
+                              ? { ...x, contextOverrides: { ...x.contextOverrides, [key]: e.target.value } }
+                              : x))}
+                            placeholder={defaultValue || "값 미입력 시 Job 정의값 사용"}
+                            className="flex-1 px-2 py-1 rounded text-[11px] font-mono outline-none"
+                            style={{ border: "1px solid #d1d5db", background: "#ffffff", color: "#0f172a" }} />
+                          {description && (
+                            <span className="text-[9px] flex-shrink-0" style={{ color: "#94a3b8" }} title={description}>{description}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[10px]" style={{ color: "#cbd5e1" }}>context 변수를 Job에 추가하면 여기서 실행마다 오버라이드할 수 있습니다.</p>
+                  )}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* 알림 */}

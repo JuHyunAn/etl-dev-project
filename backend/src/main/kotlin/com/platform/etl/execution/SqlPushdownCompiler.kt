@@ -35,26 +35,41 @@ class SqlPushdownCompiler(
         val expression: String
     )
 
-    fun compile(plan: ExecutionPlan): CompiledPipeline {
+    /**
+     * 특정 Output 노드를 대상으로 컴파일합니다.
+     * 해당 Output 노드의 upstream ROW 경로만 추적하여 CTE를 생성합니다.
+     * Multi-output 환경에서 각 Output마다 독립적인 SQL을 생성할 수 있습니다.
+     */
+    fun compile(plan: ExecutionPlan, targetOutputNode: NodeIR): CompiledPipeline {
         val ir = plan.ir
         val incomingEdges = ir.edges.groupBy { it.target }
 
-        val outputNode = ir.nodes.find { it.type == ComponentType.T_JDBC_OUTPUT }
-            ?: throw IllegalStateException("T_JDBC_OUTPUT 노드가 없습니다")
+        val outputConnId = targetOutputNode.config["connectionId"]?.toString()
+            ?: throw IllegalStateException("Output 노드 '${targetOutputNode.label}'에 connectionId 미설정")
+        val outputTable = targetOutputNode.config["tableName"]?.toString()
+            ?: throw IllegalStateException("Output 노드 '${targetOutputNode.label}'에 tableName 미설정")
+        val writeMode = targetOutputNode.config["writeMode"]?.toString() ?: "INSERT"
 
-        val outputConnId = outputNode.config["connectionId"]?.toString()
-            ?: throw IllegalStateException("Output 노드에 connectionId 미설정")
-        val outputTable = outputNode.config["tableName"]?.toString()
-            ?: throw IllegalStateException("Output 노드에 tableName 미설정")
-        val writeMode = outputNode.config["writeMode"]?.toString() ?: "INSERT"
+        // 이 Output 노드의 upstream 노드 ID 집합 (ROW 엣지 역추적)
+        val upstreamIds = collectUpstreamIds(targetOutputNode.id, ir)
 
-        // 각 노드를 위상 정렬 순서대로 CTE로 변환 (Output 노드 제외)
-        val ctes = mutableListOf<Pair<String, String>>() // cteName -> cte body sql
+        // 위상 정렬 순서대로 CTE 생성 — 이 Output의 upstream에 해당하는 노드만 포함
+        val ctes = mutableListOf<Pair<String, String>>()
         for (nodeId in plan.sortedNodeIds) {
-            val node = ir.nodes.find { it.id == nodeId } ?: continue
+            var node = ir.nodes.find { it.id == nodeId } ?: continue
             if (node.type == ComponentType.T_JDBC_OUTPUT) continue
+            if (nodeId !in upstreamIds) continue
 
-            // ROW 엣지만 데이터 파이프라인 predecessor로 취급 (TRIGGER는 실행 제어 흐름)
+            // T_MAP: outputMappings[targetOutputNode.id]가 있으면 해당 매핑을 우선 적용
+            if (node.type == ComponentType.T_MAP) {
+                @Suppress("UNCHECKED_CAST")
+                val outputMappings = node.config["outputMappings"] as? Map<String, Any?>
+                val specificMappings = outputMappings?.get(targetOutputNode.id)
+                if (specificMappings != null) {
+                    node = node.copy(config = node.config + mapOf("mappings" to specificMappings))
+                }
+            }
+
             val predecessorIds = (incomingEdges[nodeId] ?: emptyList())
                 .filter { it.linkType == LinkType.ROW }
                 .map { it.source }
@@ -64,13 +79,12 @@ class SqlPushdownCompiler(
             ctes.add(cteNameOf(nodeId) to body)
         }
 
-        require(ctes.isNotEmpty()) { "컴파일 가능한 노드가 없습니다" }
+        require(ctes.isNotEmpty()) { "Output '${targetOutputNode.label}'에 연결된 컴파일 가능한 노드가 없습니다" }
 
         val finalCte = ctes.last().first
 
-        // Output 컬럼 목록
-        val outputCols = parseColumnList(outputNode.config["columns"])
-        val colDecl = if (outputCols.isNotEmpty()) " (${outputCols.joinToString(", ")})" else ""
+        val outputCols = parseColumnList(targetOutputNode.config["columns"])
+        val colDecl   = if (outputCols.isNotEmpty()) " (${outputCols.joinToString(", ")})" else ""
         val selectCols = if (outputCols.isNotEmpty()) outputCols.joinToString(", ") else "*"
 
         val withClause = "WITH\n" + ctes.joinToString(",\n\n") { (name, body) ->
@@ -86,6 +100,15 @@ class SqlPushdownCompiler(
             writeMode = writeMode,
             outputTable = outputTable
         )
+    }
+
+    /**
+     * 하위 호환용 — Output 노드가 하나일 때 사용합니다.
+     */
+    fun compile(plan: ExecutionPlan): CompiledPipeline {
+        val outputNode = plan.ir.nodes.find { it.type == ComponentType.T_JDBC_OUTPUT }
+            ?: throw IllegalStateException("T_JDBC_OUTPUT 노드가 없습니다")
+        return compile(plan, outputNode)
     }
 
     // ── CTE 이름 생성 (nodeId의 특수문자 → 언더스코어) ──────────
@@ -251,6 +274,26 @@ class SqlPushdownCompiler(
     }
 
     // ── 유틸 ────────────────────────────────────────────────────
+
+    /**
+     * targetNodeId에서 ROW 엣지를 역방향으로 BFS하여 모든 upstream 노드 ID를 반환합니다.
+     * 결과에 targetNodeId 자신도 포함됩니다.
+     */
+    private fun collectUpstreamIds(targetNodeId: String, ir: JobIR): Set<String> {
+        val rowEdgesByTarget = ir.edges
+            .filter { it.linkType == LinkType.ROW }
+            .groupBy { it.target }
+        val visited = mutableSetOf<String>()
+        val queue   = ArrayDeque<String>()
+        queue.add(targetNodeId)
+        while (queue.isNotEmpty()) {
+            val id = queue.removeFirst()
+            if (visited.add(id)) {
+                rowEdgesByTarget[id]?.forEach { queue.add(it.source) }
+            }
+        }
+        return visited
+    }
 
     @Suppress("UNCHECKED_CAST")
     private fun parseMappings(raw: Any?): List<MappingEntry> =

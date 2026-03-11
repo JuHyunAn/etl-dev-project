@@ -5,7 +5,9 @@ import com.platform.etl.ir.*
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.sql.DriverManager
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 @Component
 class SqlPushdownAdapter(
@@ -98,12 +100,21 @@ class SqlPushdownAdapter(
         // Trigger 엣지 존재 여부 — 있으면 노드 실패 시 즉시 중단하지 않고 ON_ERROR 경로 처리
         val hasTriggerEdges = resolvedPlan.ir.edges.any { it.linkType == com.platform.etl.ir.LinkType.TRIGGER }
 
+        // T_LOOP 노드가 관리하는 "루프 바디" 노드 집합 — 메인 루프에서 제외됨
+        val loopBodyNodes = resolvedPlan.ir.nodes
+            .filter { it.type == ComponentType.T_LOOP }
+            .flatMap { collectLoopBodyIds(it.id, resolvedPlan.ir) }
+            .toSet()
+
         try {
             logs += "[${LocalDateTime.now()}] Job 실행 시작: ${resolvedPlan.jobId}"
             if (transactionMode) logs += "[TX] 트랜잭션 모드 활성화"
             if (hasTriggerEdges) logs += "[TRIGGER] Trigger 모드 활성화"
 
             for (nodeId in resolvedPlan.sortedNodeIds) {
+                // 루프 바디 노드는 T_LOOP 실행 시 처리됨
+                if (nodeId in loopBodyNodes) continue
+
                 val node = resolvedPlan.ir.nodes.find { it.id == nodeId } ?: continue
 
                 // Trigger 조건 체크: 이 노드로 들어오는 TRIGGER 엣지가 있으면 조건 확인
@@ -116,13 +127,16 @@ class SqlPushdownAdapter(
                     }
                 }
 
-                val result = executeNode(node, resolvedPlan, logs, sharedConnections)
+                val result = if (node.type == ComponentType.T_LOOP) {
+                    executeLoop(node, resolvedPlan, logs, sharedConnections, nodeResults)
+                } else {
+                    executeNode(node, resolvedPlan, logs, sharedConnections)
+                }
                 nodeResults[nodeId] = result
 
                 if (result.status == ExecutionStatus.FAILED) {
                     logs += "[ERROR] 노드 '${node.label}' 실패: ${result.errorMessage}"
                     if (!hasTriggerEdges) {
-                        // 기존 동작: 즉시 중단
                         if (sharedConnections != null) {
                             sharedConnections.values.forEach { runCatching { it.rollback() } }
                             logs += "[TX] 트랜잭션 롤백 완료 (오류)"
@@ -130,7 +144,6 @@ class SqlPushdownAdapter(
                         return buildResult(resolvedPlan, ExecutionStatus.FAILED, startedAt, startMs,
                             nodeResults, logs, result.errorMessage)
                     }
-                    // Trigger 모드: 계속 실행 (ON_ERROR 경로가 처리)
                 } else {
                     logs += "[OK] 노드 '${node.label}': ${result.rowsProcessed}행 처리"
                 }
@@ -245,9 +258,300 @@ class SqlPushdownAdapter(
 
             ComponentType.T_LOG_ROW -> executeLogRowNode(node, plan, logs, startMs)
 
+            // T_LOOP는 execute()에서 직접 처리됨 (여기까지 오면 안 됨)
+            ComponentType.T_LOOP -> NodeResult(node.id, node.type.name, ExecutionStatus.SKIPPED,
+                durationMs = System.currentTimeMillis() - startMs)
+
             // T_PRE_JOB, T_POST_JOB, T_SLEEP 등 오케스트레이션 — 향후 구현
             else -> NodeResult(node.id, node.type.name, ExecutionStatus.SKIPPED,
                 durationMs = System.currentTimeMillis() - startMs)
+        }
+    }
+
+    // ── T_LOOP 실행 ───────────────────────────────────────────────
+
+    /**
+     * T_LOOP 노드 실행.
+     * - 이터레이션 값 생성 → 루프 바디 노드를 N회 반복 실행
+     * - 매 반복마다 loopVar 를 context에 주입하고 바디 노드를 재치환
+     */
+    private fun executeLoop(
+        loopNode: NodeIR,
+        plan: ExecutionPlan,
+        logs: MutableList<String>,
+        sharedConnections: MutableMap<String, java.sql.Connection>?,
+        nodeResults: MutableMap<String, NodeResult>
+    ): NodeResult {
+        val startMs = System.currentTimeMillis()
+        val config  = loopNode.config
+        val loopVar = (config["loopVar"] as? String)?.trim()?.ifBlank { null } ?: "LOOP_VAR"
+
+        val iterations = generateLoopIterations(config)
+        if (iterations.isEmpty()) {
+            logs += "[LOOP '${loopNode.label}'] 이터레이션 없음 — 건너뜀"
+            return NodeResult(loopNode.id, loopNode.type.name, ExecutionStatus.SUCCESS,
+                durationMs = System.currentTimeMillis() - startMs)
+        }
+
+        // 루프 바디 노드 ID (위상정렬 순서 유지)
+        val bodyIdSet   = collectLoopBodyIds(loopNode.id, plan.ir)
+        val orderedBody = plan.sortedNodeIds.filter { it in bodyIdSet }
+
+        // WHILE 문 처리
+        if (iterations == listOf("__WHILE__")) {
+            return executeWhileLoop(loopNode, plan, logs, sharedConnections, nodeResults,
+                bodyIdSet, orderedBody, loopVar, startMs)
+        }
+
+        logs += "[LOOP '${loopNode.label}'] 시작: ${iterations.size}회 반복 / 변수=$loopVar"
+
+        var totalRows = 0L
+
+        for ((idx, iterVal) in iterations.withIndex()) {
+            logs += "[LOOP] ▶ 반복 ${idx + 1}/${iterations.size}: $loopVar = $iterVal"
+
+            // 이번 이터레이션 context (루프 변수 주입)
+            val iterContext = plan.context + mapOf(loopVar to iterVal)
+
+            // 바디 노드를 새 context로 재치환
+            val resolvedBodyNodes = plan.ir.nodes
+                .filter { it.id in bodyIdSet }
+                .map { resolveNode(it, iterContext) }
+                .associateBy { it.id }
+
+            val iterPlan = plan.copy(context = iterContext)
+
+            for (bodyId in orderedBody) {
+                val bodyNode = resolvedBodyNodes[bodyId] ?: continue
+                val result   = executeNode(bodyNode, iterPlan, logs, sharedConnections)
+                nodeResults[bodyId] = result   // 마지막 이터레이션 결과로 덮어씀
+                totalRows += result.rowsProcessed
+
+                if (result.status == ExecutionStatus.FAILED) {
+                    val errMsg = "반복 ${idx + 1} 실패 (${bodyNode.label}): ${result.errorMessage}"
+                    logs += "[LOOP ERROR] $errMsg"
+                    return NodeResult(loopNode.id, loopNode.type.name, ExecutionStatus.FAILED,
+                        rowsProcessed = totalRows,
+                        durationMs = System.currentTimeMillis() - startMs,
+                        errorMessage = errMsg)
+                }
+            }
+        }
+
+        logs += "[LOOP '${loopNode.label}'] 완료: ${iterations.size}회 / 총 ${totalRows}행"
+        return NodeResult(loopNode.id, loopNode.type.name, ExecutionStatus.SUCCESS,
+            rowsProcessed = totalRows,
+            durationMs = System.currentTimeMillis() - startMs)
+    }
+
+    /**
+     * WHILE 문 실행: conditionSql 결과가 0이 될 때까지 반복.
+     * loopVar가 지정된 경우 반복 번호(1부터)를 context에 주입.
+     */
+    private fun executeWhileLoop(
+        loopNode: NodeIR,
+        plan: ExecutionPlan,
+        logs: MutableList<String>,
+        sharedConnections: MutableMap<String, java.sql.Connection>?,
+        nodeResults: MutableMap<String, NodeResult>,
+        bodyIdSet: Set<String>,
+        orderedBody: List<String>,
+        loopVar: String,
+        startMs: Long
+    ): NodeResult {
+        val config        = loopNode.config
+        val conditionSql  = (config["conditionSql"] as? String)?.trim() ?: ""
+        val maxIterations = (config["maxIterations"] as? String)?.toIntOrNull()?.takeIf { it > 0 } ?: 1000
+        val connId        = (config["connectionId"] as? String)
+            ?: plan.ir.nodes.firstOrNull { it.type.name.contains("INPUT") }?.config?.get("connectionId")?.toString()
+
+        if (conditionSql.isBlank()) {
+            logs += "[WHILE '${loopNode.label}'] conditionSql 미설정 — 건너뜀"
+            return NodeResult(loopNode.id, loopNode.type.name, ExecutionStatus.SUCCESS,
+                durationMs = System.currentTimeMillis() - startMs)
+        }
+        if (connId == null) {
+            logs += "[WHILE '${loopNode.label}'] connectionId 없음 — 건너뜀"
+            return NodeResult(loopNode.id, loopNode.type.name, ExecutionStatus.FAILED,
+                durationMs = System.currentTimeMillis() - startMs,
+                errorMessage = "conditionSql 실행용 connectionId를 찾을 수 없습니다")
+        }
+
+        // conditionSql 실행용 JDBC 연결 정보
+        val whileConn     = runCatching { connectionService.get(java.util.UUID.fromString(connId)) }.getOrNull()
+            ?: return NodeResult(loopNode.id, loopNode.type.name, ExecutionStatus.FAILED,
+                durationMs = System.currentTimeMillis() - startMs,
+                errorMessage = "connectionId '$connId' 조회 실패")
+        val whileJdbcUrl  = connectionService.buildJdbcUrl(whileConn)
+        val whilePassword = connectionService.getDecryptedPassword(whileConn.id)
+
+        logs += "[WHILE '${loopNode.label}'] 시작 (최대 ${maxIterations}회)"
+        var totalRows = 0L
+
+        for (idx in 1..maxIterations) {
+            // 조건 확인
+            val conditionResult = runCatching {
+                DriverManager.getConnection(whileJdbcUrl, whileConn.username, whilePassword).use { jdbc ->
+                    jdbc.createStatement().use { stmt ->
+                        stmt.executeQuery(conditionSql).use { rs -> if (rs.next()) rs.getLong(1) else 0L }
+                    }
+                }
+            }.getOrElse { e ->
+                logs += "[WHILE ERROR] 조건 SQL 실행 실패: ${e.message}"
+                return NodeResult(loopNode.id, loopNode.type.name, ExecutionStatus.FAILED,
+                    rowsProcessed = totalRows,
+                    durationMs = System.currentTimeMillis() - startMs,
+                    errorMessage = e.message)
+            }
+
+            if (conditionResult <= 0L) {
+                logs += "[WHILE] 조건 결과=0, 루프 종료 (${idx - 1}회 실행)"
+                break
+            }
+
+            logs += "[WHILE] ▶ 반복 $idx: 조건=$conditionResult / $loopVar=$idx"
+            val iterContext       = plan.context + mapOf(loopVar to idx.toString())
+            val resolvedBodyNodes = plan.ir.nodes
+                .filter { it.id in bodyIdSet }
+                .map { resolveNode(it, iterContext) }
+                .associateBy { it.id }
+            val iterPlan = plan.copy(context = iterContext)
+
+            for (bodyId in orderedBody) {
+                val bodyNode = resolvedBodyNodes[bodyId] ?: continue
+                val result   = executeNode(bodyNode, iterPlan, logs, sharedConnections)
+                nodeResults[bodyId] = result
+                totalRows += result.rowsProcessed
+                if (result.status == ExecutionStatus.FAILED) {
+                    val errMsg = "반복 $idx 실패 (${bodyNode.label}): ${result.errorMessage}"
+                    logs += "[WHILE ERROR] $errMsg"
+                    return NodeResult(loopNode.id, loopNode.type.name, ExecutionStatus.FAILED,
+                        rowsProcessed = totalRows,
+                        durationMs = System.currentTimeMillis() - startMs,
+                        errorMessage = errMsg)
+                }
+            }
+
+            if (idx == maxIterations) logs += "[WHILE] 최대 반복 횟수(${maxIterations}) 도달, 강제 종료"
+        }
+
+        logs += "[WHILE '${loopNode.label}'] 완료 / 총 ${totalRows}행"
+        return NodeResult(loopNode.id, loopNode.type.name, ExecutionStatus.SUCCESS,
+            rowsProcessed = totalRows,
+            durationMs = System.currentTimeMillis() - startMs)
+    }
+
+    /**
+     * T_LOOP 노드를 루트로 하는 downstream 노드 ID 집합 (BFS).
+     * 모든 엣지 타입(TRIGGER/ROW/LOOKUP)으로 연결된 하위 노드 포함.
+     */
+    private fun collectLoopBodyIds(loopNodeId: String, ir: JobIR): Set<String> {
+        val visited = mutableSetOf<String>()
+        val queue   = ArrayDeque<String>()
+        ir.edges.filter { it.source == loopNodeId }.forEach { queue.add(it.target) }
+        while (queue.isNotEmpty()) {
+            val id = queue.removeFirst()
+            if (visited.add(id)) {
+                ir.edges.filter { it.source == id }.forEach { queue.add(it.target) }
+            }
+        }
+        return visited
+    }
+
+    /**
+     * loopType에 따라 이터레이션 값 목록 생성.
+     *
+     * [신규] FOR + forSubType=RANGE : from..to step step (숫자 또는 날짜 yyyyMMdd 자동감지)
+     * [신규] FOR + forSubType=LIST  : listValues 콤마 구분 목록
+     * [구형 호환] FOR       : start..end step step (정수)
+     * [구형 호환] FOR_DATE  : startDate..endDate step dateStep일
+     * [구형 호환] LIST      : listValues 콤마 구분 목록
+     */
+    private val DATE8_PATTERN = Regex("^(19|20)\\d{6}$")
+
+    private fun generateLoopIterations(config: Map<String, Any?>): List<String> {
+        val loopType   = config["loopType"]   as? String ?: "FOR"
+        val forSubType = config["forSubType"] as? String ?: "RANGE"
+
+        // WHILE문 — executeLoop에서 별도 처리 (여기서는 빈 목록 반환 안 함, 호출부에서 분기)
+        if (loopType == "WHILE") return listOf("__WHILE__")
+
+        // 신규 LIST 포맷
+        if (loopType == "FOR" && forSubType == "LIST") {
+            return (config["listValues"] as? String)
+                ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }
+                ?: emptyList()
+        }
+
+        // 신규 RANGE 포맷 (from/to 키 사용)
+        if (loopType == "FOR" && config.containsKey("from")) {
+            val from = config["from"] as? String ?: return emptyList()
+            val to   = config["to"]   as? String ?: return emptyList()
+            val step = (config["step"] as? String)?.toLongOrNull()?.takeIf { it > 0 } ?: 1L
+
+            return if (DATE8_PATTERN.matches(from) || DATE8_PATTERN.matches(to)) {
+                // 날짜 범위
+                val dtf       = DateTimeFormatter.ofPattern("yyyyMMdd")
+                val startDate = runCatching { LocalDate.parse(from, dtf) }.getOrNull() ?: return emptyList()
+                val endDate   = runCatching { LocalDate.parse(to,   dtf) }.getOrNull() ?: return emptyList()
+                val stepUnit  = (config["stepUnit"] as? String) ?: "DAY"
+                val result    = mutableListOf<String>()
+                var cur = startDate
+                while (!cur.isAfter(endDate)) {
+                    result += cur.format(dtf)
+                    cur = when (stepUnit) {
+                        "MONTH" -> cur.plusMonths(step)
+                        "YEAR"  -> cur.plusYears(step)
+                        else    -> cur.plusDays(step)
+                    }
+                }
+                result
+            } else {
+                // 숫자 범위
+                val s = from.toLongOrNull() ?: return emptyList()
+                val e = to.toLongOrNull()   ?: return emptyList()
+                val result = mutableListOf<String>()
+                var cur = s
+                while (cur <= e) { result += cur.toString(); cur += step }
+                result
+            }
+        }
+
+        // 구형 호환: FOR_DATE
+        if (loopType == "FOR_DATE") {
+            val fmt       = (config["dateFormat"] as? String)?.takeIf { it.isNotBlank() } ?: "yyyyMMdd"
+            val dtf       = DateTimeFormatter.ofPattern(fmt)
+            val startDate = runCatching { LocalDate.parse(config["startDate"] as? String ?: "", dtf) }.getOrNull()
+                ?: return emptyList()
+            val endDate   = runCatching { LocalDate.parse(config["endDate"]   as? String ?: "", dtf) }.getOrNull()
+                ?: return emptyList()
+            val step      = (config["dateStep"] as? String)?.toLongOrNull()?.takeIf { it > 0 } ?: 1L
+            val result    = mutableListOf<String>()
+            var cur = startDate
+            while (!cur.isAfter(endDate)) { result += cur.format(dtf); cur = cur.plusDays(step) }
+            return result
+        }
+
+        // 구형 호환: FOR (start/end) 또는 LIST
+        return when (loopType) {
+            "FOR" -> {
+                val start = (config["start"] as? String)?.toLongOrNull() ?: 0L
+                val end   = (config["end"]   as? String)?.toLongOrNull() ?: 0L
+                val step  = (config["step"]  as? String)?.toLongOrNull()?.takeIf { it != 0L } ?: 1L
+                val result = mutableListOf<String>()
+                if (step > 0 && start <= end) {
+                    var cur = start; while (cur <= end) { result += cur.toString(); cur += step }
+                } else if (step < 0 && start >= end) {
+                    var cur = start; while (cur >= end) { result += cur.toString(); cur += step }
+                }
+                result
+            }
+            "LIST" -> {
+                (config["listValues"] as? String)
+                    ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }
+                    ?: emptyList()
+            }
+            else -> emptyList()
         }
     }
 
@@ -303,8 +607,8 @@ class SqlPushdownAdapter(
         }
 
         return try {
-            // 1. 파이프라인 전체를 CTE 기반 INSERT...SELECT SQL로 컴파일
-            val compiled = compiler.compile(plan)
+            // 1. 이 Output 노드의 upstream 경로만 추적하여 CTE 기반 INSERT...SELECT SQL 컴파일
+            val compiled = compiler.compile(plan, node)
             logs += "[SQL] 컴파일 완료 (${compiled.sql.lines().size}줄)"
             log.debug("Generated SQL:\n{}", compiled.sql)
 

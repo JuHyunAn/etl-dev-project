@@ -11,7 +11,7 @@ export type ComponentType =
   | 'T_MAP' | 'T_FILTER_ROW' | 'T_AGGREGATE_ROW' | 'T_SORT_ROW'
   | 'T_JOIN' | 'T_CONVERT_TYPE' | 'T_REPLACE' | 'T_UNION_ROW'
   | 'T_JDBC_OUTPUT' | 'T_FILE_OUTPUT'
-  | 'T_PRE_JOB' | 'T_POST_JOB' | 'T_RUN_JOB' | 'T_SLEEP'
+  | 'T_PRE_JOB' | 'T_POST_JOB' | 'T_RUN_JOB' | 'T_SLEEP' | 'T_LOOP'
   | 'T_DB_COMMIT' | 'T_DB_ROLLBACK'
   | 'T_LOG_ROW' | 'T_DIE'
   | 'T_VALIDATE' | 'T_PROFILE' | 'T_LINEAGE'
@@ -107,13 +107,19 @@ export interface EdgeIR {
   triggerCondition?: TriggerCondition
 }
 
+export interface ContextVar {
+  value: string
+  defaultValue?: string
+  description?: string
+}
+
 export interface JobIR {
   id: string
   version: string
   engineType: EngineType
   nodes: NodeIR[]
   edges: EdgeIR[]
-  context: Record<string, string>
+  context: Record<string, ContextVar>
 }
 
 export interface LogRowData {

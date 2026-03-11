@@ -32,7 +32,8 @@ class ExecutionService(
     private val jobRepository: JobRepository,
     private val executionRepository: ExecutionRepository,
     private val sqlPushdownAdapter: SqlPushdownAdapter,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val contextFunctionEvaluator: ContextFunctionEvaluator
 ) {
     fun execute(
         jobId: UUID,
@@ -159,7 +160,17 @@ class ExecutionService(
         context: Map<String, String>, previewMode: Boolean
     ): ExecutionPlan {
         val sortedIds = topologicalSort(ir)
-        val mergedContext = ir.context + context
+        // 머징 순서: ir.context.defaultValue → ir.context.value → runtimeContext (뒤가 우선)
+        val merged = mutableMapOf<String, String>()
+        ir.context.forEach { (k, v) ->
+            v.defaultValue?.takeIf { it.isNotBlank() }?.let { merged[k] = it }
+        }
+        ir.context.forEach { (k, v) ->
+            if (v.value.isNotBlank()) merged[k] = v.value
+        }
+        context.forEach { (k, v) -> merged[k] = v }
+        // 내장 함수 평가
+        val mergedContext = merged.mapValues { (_, v) -> contextFunctionEvaluator.evaluate(v) }
         return ExecutionPlan(
             jobId = jobId,
             ir = ir,

@@ -2,6 +2,41 @@ package com.platform.etl.ir
 
 import com.fasterxml.jackson.annotation.JsonSubTypes
 import com.fasterxml.jackson.annotation.JsonTypeInfo
+import com.fasterxml.jackson.core.JsonParser
+import com.fasterxml.jackson.databind.DeserializationContext
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import com.fasterxml.jackson.databind.deser.std.StdDeserializer
+
+/**
+ * Context 변수 정의.
+ * - value: 직접 지정값 (비어 있으면 defaultValue 사용)
+ * - defaultValue: 값 없이 실행 시 사용되는 기본값 (null이면 필수 변수)
+ * - description: UI 표시용 설명
+ *
+ * 역직렬화: 이전 형식("BIZ_DT": "20260101") 과 새 형식("BIZ_DT": {...}) 모두 지원.
+ */
+@JsonDeserialize(using = ContextVarDeserializer::class)
+data class ContextVar(
+    val value: String = "",
+    val defaultValue: String? = null,
+    val description: String? = null
+)
+
+class ContextVarDeserializer : StdDeserializer<ContextVar>(ContextVar::class.java) {
+    override fun deserialize(p: JsonParser, ctxt: DeserializationContext): ContextVar {
+        val node: JsonNode = p.codec.readTree(p)
+        return if (node.isTextual) {
+            ContextVar(value = node.asText())
+        } else {
+            ContextVar(
+                value       = node.get("value")?.asText() ?: "",
+                defaultValue = node.get("defaultValue")?.asText()?.takeIf { it.isNotBlank() },
+                description  = node.get("description")?.asText()?.takeIf { it.isNotBlank() }
+            )
+        }
+    }
+}
 
 /**
  * Job IR (Intermediate Representation)
@@ -14,7 +49,7 @@ data class JobIR(
     val engineType: EngineType = EngineType.SQL_PUSHDOWN,
     val nodes: List<NodeIR>,
     val edges: List<EdgeIR>,
-    val context: Map<String, String> = emptyMap()
+    val context: Map<String, ContextVar> = emptyMap()
 )
 
 enum class EngineType {
@@ -108,6 +143,7 @@ enum class ComponentType {
     T_POST_JOB,             // Job 종료 후 처리
     T_RUN_JOB,              // 서브 Job 실행
     T_SLEEP,                // 대기
+    T_LOOP,                 // 반복 실행 (숫자/날짜 범위, 목록)
 
     // ── Transaction Control ──────────────────────────
     T_DB_COMMIT,            // 트랜잭션 커밋

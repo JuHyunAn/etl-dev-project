@@ -22,6 +22,7 @@ const GROUP_META: Record<string, { iconBg: string; iconColor: string; categoryLa
 function getGroupMeta(type: ComponentType) {
   if (type === 'T_DB_COMMIT')   return { iconBg: '#f0fdf4', iconColor: '#16a34a', categoryLabel: 'Control' }
   if (type === 'T_DB_ROLLBACK') return { iconBg: '#fef2f2', iconColor: '#dc2626', categoryLabel: 'Control' }
+  if (type === 'T_LOOP')        return { iconBg: '#fff7ed', iconColor: '#ea580c', categoryLabel: 'Control' }
   if (type === 'T_JDBC_INPUT' || type === 'T_FILE_INPUT') return GROUP_META.INPUT
   if (type === 'T_JDBC_OUTPUT' || type === 'T_FILE_OUTPUT') return GROUP_META.OUTPUT
   if (['T_PRE_JOB','T_POST_JOB','T_RUN_JOB','T_SLEEP','T_DB_COMMIT','T_DB_ROLLBACK'].includes(type)) return GROUP_META.ORCHESTRATION
@@ -287,6 +288,26 @@ const ETLNode = memo(({ id, data, selected }: NodeProps) => {
           >
             {nodeData.label}
           </p>
+
+          {/* T_LOOP 요약 배지 */}
+          {nodeData.componentType === 'T_LOOP' && (
+            <div style={{ marginTop: 4 }}>
+              <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 4, fontFamily: 'monospace',
+                background: '#fff7ed', border: '1px solid #fdba74', color: '#ea580c' }}>
+                {(() => {
+                  const c = nodeData.config ?? {}
+                  const lt  = (c.loopType   as string) || 'FOR'
+                  const fst = (c.forSubType as string) || 'RANGE'
+                  if (lt === 'WHILE') return `While (최대 ${c.maxIterations ?? 1000}회)`
+                  if (fst === 'LIST') return `LIST (${((c.listValues as string) ?? '').split(',').filter(Boolean).length}개)`
+                  const from = (c.from as string) || (c.startDate as string) || (c.start as string) || '?'
+                  const to   = (c.to   as string) || (c.endDate   as string) || (c.end   as string) || '?'
+                  const step = (c.step as string) || '1'
+                  return `${from} ~ ${to} / step ${step}`
+                })()}
+              </span>
+            </div>
+          )}
 
           {/* Write Mode badge */}
           {nodeData.componentType === 'T_JDBC_OUTPUT' && nodeData.config?.writeMode && (

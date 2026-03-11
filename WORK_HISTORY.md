@@ -522,6 +522,65 @@ ETL_Platform/
 - `+ Quick Schedule` 버튼: 이름 + cron 프리셋으로 단일 Job 스케줄 즉시 생성
 - `스케줄러 탭 →` 버튼: `/schedules` 페이지로 이동
 
+### 6-9. T_LOOP 컴포넌트 (2026-03-11)
+
+#### 개요
+Talend tLoop 방식의 반복 실행 컴포넌트. 날짜 범위, 숫자 범위, 목록을 순회하며 하위 노드를 반복 실행.
+
+#### 지원 모드
+- **FOR_DATE**: startDate~endDate, dateStep(일), dateFormat(기본 yyyyMMdd)
+- **FOR**: start~end, step (정수 범위)
+- **LIST**: 콤마 구분 값 목록
+
+#### 백엔드 (`SqlPushdownAdapter.kt`)
+- `execute()`: T_LOOP 노드의 하위 노드(loopBodyNodes)를 메인 루프에서 제외
+- `executeLoop()`: 이터레이션 생성 → 매 반복마다 loopVar 주입 → 하위 노드 재치환 후 실행
+- `collectLoopBodyIds()`: BFS로 T_LOOP 하위 노드 집합 추출
+- `generateLoopIterations()`: 3가지 모드별 값 목록 생성
+- `ir/JobIR.kt`: `T_LOOP` enum 추가
+
+#### 프론트엔드
+- **ComponentPalette**: Orchestration 섹션에 T_LOOP 추가 (주황색 테마)
+- **PropertiesPanel** `LoopConfig`: 모드 탭 전환 UI + 실시간 반복 횟수 프리뷰
+- **CustomNodes**: T_LOOP 노드에 범위 요약 배지 (예: "20260101 ~ 20261231")
+- **types/index.ts**: `T_LOOP` ComponentType 추가
+
+#### 사용 패턴
+```
+T_LOOP (BIZ_DT, 20260101~20261231, 1일)
+    ──TRIGGER──▶ T_RUN_JOB (서브잡: 일별 처리)
+```
+
+---
+
+### 6-8. Context 변수 고도화 (2026-03-11)
+
+#### Priority 1 — 기본값(defaultValue) 지원
+- **`ir/JobIR.kt`**: `JobIR.context` 타입을 `Map<String, String>` → `Map<String, ContextVar>` 로 변경
+  - `ContextVar(value, defaultValue?, description?)` data class 추가
+  - `ContextVarDeserializer`: 이전 형식(`"BIZ_DT": "20260101"`)과 새 형식(`"BIZ_DT": {...}`) 모두 역직렬화
+- **`execution/ExecutionService.kt`**: `buildPlan()` 머징 순서 → `defaultValue → value → runtimeContext`
+  - `ContextFunctionEvaluator` 의존성 주입 추가
+
+#### Priority 2 — Schedule contextOverrides UI 개선
+- **`SchedulesPage.tsx`** SettingsTab: Step 폼에 Job별 context 변수 자동 로드 → 변수별 개별 입력 폼 제공
+  - `getJobContextVars()`: Job의 irJson에서 context 변수 추출 (ContextVar 형식 + 이전 string 형식 모두 처리)
+  - Step 저장 시 빈 값 제외하고 JSON 직렬화 → `contextOverrides` 전송
+  - Job 선택 변경 시 contextOverrides 초기화
+
+#### Priority 3 — 내장 Run-단위 함수 (`${today()}` 등)
+- **NEW `execution/ContextFunctionEvaluator.kt`**: 화이트리스트 함수 평가
+  - `${today(format)}`, `${now(format)}`, `${uuid()}`, `${dateAdd(date,days)}`, `${env(KEY)}`
+  - env()는 `ETL_ENV / ETL_PROJECT / ETL_VERSION` 키만 허용 (보안)
+- **`execution/ExecutionService.kt`**: context 머징 후 `ContextFunctionEvaluator.evaluate()` 적용
+
+#### 프론트엔드 ContextVarsPanel 개선
+- **`JobDesignerPage.tsx`**: `CtxVar` 인터페이스에 `defaultValue`, `description` 필드 추가
+  - 저장 행: fn 표현식은 보라색 `fn` 배지 + 실시간 프리뷰 표시, 기본값은 이탤릭 회색으로 표시
+  - 편집 행: `fn` 버튼으로 내장 함수 팔레트 팝업 → 함수 선택 + 파라미터 입력 + 브라우저사이드 프리뷰
+  - `▶ 기본값/설명` 접이식 영역으로 defaultValue, description 입력
+- **`types/index.ts`**: `ContextVar` 인터페이스 추가, `JobIR.context` 타입 업데이트
+
 ---
 
 ## 7. 데이터 모델 (IR)
