@@ -64,7 +64,7 @@ export default function ExecutionsPage() {
       <div className="px-6 py-5" style={{ borderBottom: "1px solid #e2e8f0" }}>
         <div className="max-w-5xl mx-auto">
           <h1 className="text-xl font-bold" style={{ color: "#0f172a" }}>Run History</h1>
-          <p className="text-sm mt-0.5" style={{ color: "#64748b" }}>Job 실행 이력</p>
+          <p className="text-sm mt-0.5" style={{ color: "#64748b" }}>View Job Execution History</p>
         </div>
       </div>
 

@@ -35,27 +35,26 @@ class ScheduleService(
      * 여기서는 stepOrder 기준으로 "선행이 자신보다 앞에 있어야 함"을 검증한다.
      */
     private fun validateStepDependencies(steps: List<ScheduleStepRequest>) {
+        val orderToIdx = steps.mapIndexed { idx, s -> (s.stepOrder ?: (idx + 1)) to idx }.toMap()
         steps.forEachIndexed { idx, step ->
-            if (step.dependsOnStepId != null) {
-                val depIdx = steps.indexOfFirst { it.jobId == step.dependsOnStepId }
-                if (depIdx >= idx) {
-                    throw IllegalArgumentException(
-                        "Step ${idx + 1}의 선행 Step이 자신과 같거나 뒤에 위치해 있습니다. 선행 Step은 반드시 앞에 위치해야 합니다."
-                    )
-                }
+            val depOrder = step.dependsOnStepOrder ?: return@forEachIndexed
+            val depIdx = orderToIdx[depOrder]
+            if (depIdx == null || depIdx >= idx) {
+                throw IllegalArgumentException(
+                    "Step ${idx + 1}의 선행 Step(stepOrder=$depOrder)이 자신과 같거나 뒤에 위치해 있습니다."
+                )
             }
         }
-        // 순환 의존 체크: 의존 관계를 따라가면서 자기 자신에게 돌아오는지 확인
+        // 순환 의존 체크
         val depMap = steps.mapIndexed { idx, step ->
-            idx to steps.indexOfFirst { it.jobId == step.dependsOnStepId }.takeIf { it >= 0 }
+            val depOrder = step.dependsOnStepOrder
+            idx to if (depOrder != null) orderToIdx[depOrder] else null
         }.toMap()
         steps.indices.forEach { startIdx ->
             val visited = mutableSetOf<Int>()
             var cur: Int? = depMap[startIdx]
             while (cur != null) {
-                if (!visited.add(cur)) {
-                    throw IllegalArgumentException("Step 의존 관계에 순환이 감지되었습니다.")
-                }
+                if (!visited.add(cur)) throw IllegalArgumentException("Step 의존 관계에 순환이 감지되었습니다.")
                 cur = depMap[cur]
             }
         }
@@ -76,12 +75,13 @@ class ScheduleService(
         )
         scheduleRepository.save(schedule)
 
-        req.steps.forEachIndexed { idx, stepReq ->
+        // Phase 1: dependsOnStepId=null로 먼저 전부 insert
+        val savedSteps = req.steps.mapIndexed { idx, stepReq ->
             val step = ScheduleStep(
                 scheduleId = schedule.id,
                 jobId = stepReq.jobId,
                 stepOrder = stepReq.stepOrder ?: (idx + 1),
-                dependsOnStepId = stepReq.dependsOnStepId,
+                dependsOnStepId = null,
                 runCondition = stepReq.runCondition,
                 timeoutSeconds = stepReq.timeoutSeconds,
                 retryCount = stepReq.retryCount,
@@ -89,6 +89,16 @@ class ScheduleService(
                 contextOverrides = stepReq.contextOverrides ?: "{}"
             )
             scheduleStepRepository.save(step)
+            step
+        }
+        // Phase 2: stepOrder → 새 step UUID 맵으로 dependsOnStepId 후처리
+        val orderToNewId = savedSteps.associate { it.stepOrder to it.id }
+        savedSteps.forEachIndexed { idx, step ->
+            val depOrder = req.steps[idx].dependsOnStepOrder
+            if (depOrder != null) {
+                step.dependsOnStepId = orderToNewId[depOrder]
+                scheduleStepRepository.save(step)
+            }
         }
 
         if (schedule.enabled) {
@@ -113,14 +123,19 @@ class ScheduleService(
         // steps 재동기화 (있을 때만)
         req.steps?.let { if (it.isNotEmpty()) validateStepDependencies(it) }
         req.steps?.let { steps ->
+            // 1. 자기참조 FK(depends_on_step_id) 먼저 NULL로 초기화 → 삭제 순서 무관하게 안전
+            scheduleStepRepository.clearDependenciesByScheduleId(id)
+            scheduleStepRepository.flush()
+            // 2. 기존 step 전체 삭제
             scheduleStepRepository.deleteByScheduleId(id)
             scheduleStepRepository.flush()
-            steps.forEachIndexed { idx, stepReq ->
+            // Phase 1: dependsOnStepId=null로 먼저 전부 insert
+            val savedSteps = steps.mapIndexed { idx, stepReq ->
                 val step = ScheduleStep(
                     scheduleId = id,
                     jobId = stepReq.jobId,
                     stepOrder = stepReq.stepOrder ?: (idx + 1),
-                    dependsOnStepId = stepReq.dependsOnStepId,
+                    dependsOnStepId = null,
                     runCondition = stepReq.runCondition,
                     timeoutSeconds = stepReq.timeoutSeconds,
                     retryCount = stepReq.retryCount,
@@ -128,7 +143,19 @@ class ScheduleService(
                     contextOverrides = stepReq.contextOverrides ?: "{}"
                 )
                 scheduleStepRepository.save(step)
+                step
             }
+            scheduleStepRepository.flush()
+            // Phase 2: stepOrder → 새 step UUID 맵으로 dependsOnStepId 후처리
+            val orderToNewId = savedSteps.associate { it.stepOrder to it.id }
+            savedSteps.forEachIndexed { idx, step ->
+                val depOrder = steps[idx].dependsOnStepOrder
+                if (depOrder != null) {
+                    step.dependsOnStepId = orderToNewId[depOrder]
+                    scheduleStepRepository.save(step)
+                }
+            }
+            scheduleStepRepository.flush()
         }
 
         // enabled 변경 처리
@@ -352,7 +379,7 @@ data class StepExecutionDto(
 data class ScheduleStepRequest(
     val jobId: UUID,
     val stepOrder: Int? = null,
-    val dependsOnStepId: UUID? = null,
+    val dependsOnStepOrder: Int? = null,   // stepOrder 기반 참조 (UUID 대신)
     val runCondition: String = "ON_SUCCESS",
     val timeoutSeconds: Int = 3600,
     val retryCount: Int = 0,

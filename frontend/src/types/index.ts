@@ -236,7 +236,7 @@ export interface ScheduleCreateRequest {
   steps: {
     jobId: string
     stepOrder?: number
-    dependsOnStepId?: string
+    dependsOnStepOrder?: number
     runCondition?: string
     timeoutSeconds?: number
     retryCount?: number

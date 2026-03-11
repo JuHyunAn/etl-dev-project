@@ -292,8 +292,12 @@ function SettingsTab({
   const [alertChannel, setAlertChannel] = useState(schedule.alertChannel ?? "");
   const [steps, setSteps] = useState(
     schedule.steps.map((s) => ({
-      id: s.id, jobId: s.jobId, stepOrder: s.stepOrder,
-      dependsOnStepId: s.dependsOnStepId ?? "", runCondition: s.runCondition,
+      jobId: s.jobId, stepOrder: s.stepOrder,
+      // dependsOnStepId(UUID) → 해당 step의 stepOrder로 변환
+      dependsOnStepOrder: s.dependsOnStepId
+        ? (schedule.steps.find((x) => x.id === s.dependsOnStepId)?.stepOrder ?? null)
+        : null,
+      runCondition: s.runCondition,
       timeoutSeconds: s.timeoutSeconds, retryCount: s.retryCount,
       retryDelaySeconds: s.retryDelaySeconds, enabled: s.enabled,
     }))
@@ -304,7 +308,7 @@ function SettingsTab({
 
   const addStep = () => setSteps((s) => [
     ...s,
-    { id: "", jobId: "", stepOrder: s.length + 1, dependsOnStepId: "", runCondition: "ON_SUCCESS", timeoutSeconds: 3600, retryCount: 0, retryDelaySeconds: 60, enabled: true },
+    { jobId: "", stepOrder: s.length + 1, dependsOnStepOrder: null, runCondition: "ON_SUCCESS", timeoutSeconds: 3600, retryCount: 0, retryDelaySeconds: 60, enabled: true },
   ]);
   const removeStep = (i: number) => setSteps((s) => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, stepOrder: idx + 1 })));
 
@@ -322,7 +326,7 @@ function SettingsTab({
         steps: steps.filter((s) => s.jobId).map((s) => ({
           jobId: s.jobId,
           stepOrder: s.stepOrder,
-          dependsOnStepId: s.dependsOnStepId || undefined,
+          dependsOnStepOrder: s.dependsOnStepOrder ?? undefined,
           runCondition: s.runCondition,
           timeoutSeconds: s.timeoutSeconds,
           retryCount: s.retryCount,
@@ -388,7 +392,7 @@ function SettingsTab({
       {/* Steps */}
       <div className="p-4 rounded-xl space-y-3" style={{ border: "1px solid #e2e8f0" }}>
         <div className="flex items-center justify-between">
-          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#64748b" }}>Flow</p>
+          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#64748b" }}>RUN STEP</p>
           <button onClick={addStep} className="text-xs px-2 py-1 rounded" style={{ background: "#eff6ff", color: "#2563eb" }}>
             + Add
           </button>
@@ -410,22 +414,28 @@ function SettingsTab({
             <div className="flex gap-2 flex-wrap">
               <div className="flex-1 min-w-[120px]">
                 <label className="text-[10px]" style={{ color: "#94a3b8" }}>Upstream Step</label>
-                <select value={step.dependsOnStepId}
-                  onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, dependsOnStepId: e.target.value } : x))}
+                <select value={step.dependsOnStepOrder ?? ""}
+                  onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, dependsOnStepOrder: e.target.value ? Number(e.target.value) : null } : x))}
                   className="w-full px-2 py-1 rounded text-xs outline-none mt-0.5"
                   style={{ border: "1px solid #d1d5db", background: "#ffffff", color: "#0f172a" }}>
                   <option value="">없음</option>
                   {steps.filter((_, idx) => idx < i).map((s, idx) => (
-                    <option key={idx} value={s.id || `step-${idx}`}>Step {s.stepOrder}</option>
+                    <option key={idx} value={s.stepOrder}>Step {s.stepOrder}</option>
                   ))}
                 </select>
               </div>
               <div className="flex-1 min-w-[110px]">
-                <label className="text-[10px]" style={{ color: "#94a3b8" }}>Run Condition</label>
+                <label className="text-[10px]" style={{ color: step.dependsOnStepOrder ? "#94a3b8" : "#cbd5e1" }}>Run Condition</label>
                 <select value={step.runCondition}
+                  disabled={!step.dependsOnStepOrder}
                   onChange={(e) => setSteps((s) => s.map((x, idx) => idx === i ? { ...x, runCondition: e.target.value as "ON_SUCCESS" | "ON_FAILURE" | "ON_COMPLETE" } : x))}
                   className="w-full px-2 py-1 rounded text-xs outline-none mt-0.5"
-                  style={{ border: "1px solid #d1d5db", background: "#ffffff", color: "#0f172a" }}>
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    background: step.dependsOnStepOrder ? "#ffffff" : "#f8fafc",
+                    color: step.dependsOnStepOrder ? "#0f172a" : "#94a3b8",
+                    cursor: step.dependsOnStepOrder ? "auto" : "not-allowed",
+                  }}>
                   <option value="ON_SUCCESS">ON_SUCCESS</option>
                   <option value="ON_FAILURE">ON_FAILURE</option>
                   <option value="ON_COMPLETE">ON_COMPLETE</option>

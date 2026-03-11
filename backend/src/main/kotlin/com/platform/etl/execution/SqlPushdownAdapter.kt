@@ -34,6 +34,25 @@ class SqlPushdownAdapter(
         }
         if (hasCycle(ir)) errors += "Job에 순환 참조(Cycle)가 존재합니다"
 
+        // tMap → tOutput 타겟 컬럼 존재 여부 검사
+        // (tOutput.config.columns가 캐시돼 있을 때만 검사)
+        ir.nodes.filter { it.type == ComponentType.T_MAP }.forEach { mapNode ->
+            val mappings = parseMappingsForValidation(mapNode.config["mappings"])
+            if (mappings.isEmpty()) return@forEach
+
+            val outputNode = findDownstreamOutput(mapNode.id, ir) ?: return@forEach
+            val targetCols = parseTargetColumns(outputNode.config["columns"])
+            if (targetCols.isEmpty()) return@forEach  // 컬럼 캐시 없으면 검사 skip
+
+            mappings.forEach { (targetName) ->
+                if (targetName.isNotBlank() &&
+                    targetCols.none { it.equals(targetName, ignoreCase = true) }
+                ) {
+                    errors += "[tMap '${mapNode.label}'] 타겟 컬럼 '${targetName}'이(가) 타겟 테이블에 존재하지 않습니다"
+                }
+            }
+        }
+
         // 미치환 context 변수 검사
         ir.nodes.forEach { node ->
             collectStrings(node.config).forEach { value ->
@@ -488,6 +507,40 @@ class SqlPushdownAdapter(
 
         return ir.nodes.any { it.id !in visited && dfs(it.id) }
     }
+
+    // ── tMap 컬럼 검증용 헬퍼 ───────────────────────────────────────
+
+    /** tMap 노드에서 다운스트림 T_JDBC_OUTPUT 노드를 BFS로 탐색 */
+    private fun findDownstreamOutput(startId: String, ir: JobIR): NodeIR? {
+        val adj = ir.edges.groupBy { it.source }.mapValues { e -> e.value.map { it.target } }
+        val visited = mutableSetOf<String>()
+        val queue = ArrayDeque<String>()
+        queue += (adj[startId] ?: emptyList())
+        while (queue.isNotEmpty()) {
+            val cur = queue.removeFirst()
+            if (!visited.add(cur)) continue
+            val node = ir.nodes.find { it.id == cur } ?: continue
+            if (node.type == ComponentType.T_JDBC_OUTPUT) return node
+            queue += (adj[cur] ?: emptyList())
+        }
+        return null
+    }
+
+    /** tMap config.mappings 파싱 → (targetName) 목록 반환 */
+    @Suppress("UNCHECKED_CAST")
+    private fun parseMappingsForValidation(raw: Any?): List<Pair<String, String>> =
+        (raw as? List<*>)?.filterIsInstance<Map<*, *>>()?.mapNotNull { m ->
+            val target = m["targetName"]?.toString() ?: return@mapNotNull null
+            val source = m["sourceColumn"]?.toString() ?: ""
+            Pair(target, source)
+        } ?: emptyList()
+
+    /** tOutput config.columns 파싱 → 컬럼명 목록 반환 */
+    @Suppress("UNCHECKED_CAST")
+    private fun parseTargetColumns(raw: Any?): List<String> =
+        (raw as? List<*>)?.filterIsInstance<Map<*, *>>()?.mapNotNull { col ->
+            col["columnName"]?.toString()
+        } ?: emptyList()
 
     // ── 결과 빌더 ────────────────────────────────────────────────
 

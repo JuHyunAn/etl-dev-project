@@ -38,7 +38,7 @@ class AlertService(
         }
         val body = """
             <html><body style="font-family:sans-serif;color:#1f2937;padding:24px">
-              <h2 style="margin:0 0 12px">스케줄 실행 완료</h2>
+              <h2 style="margin:0 0 12px"workflow run</h2>
               <table style="border-collapse:collapse;width:100%;max-width:480px">
                 <tr><td style="padding:6px 12px;background:#f1f5f9;font-weight:600">스케줄</td>
                     <td style="padding:6px 12px">$scheduleName</td></tr>
