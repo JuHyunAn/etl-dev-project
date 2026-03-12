@@ -1,12 +1,83 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { schemaApi } from "../../api";
 import { Spinner } from "../ui";
 import type { Node, Edge } from "@xyflow/react";
 import type { ColumnInfo } from "../../types";
+import { type MappingRow, buildAutoMappings } from "../../utils/mapping";
 import {
-  type MappingRow,
-  buildAutoMappings,
-} from "../../utils/mapping";
+  normalizeType,
+  resolveCast,
+  ENHANCEMENTS,
+  BULK_ENHANCEMENTS,
+} from "../../utils/typeUtils";
+import { useAppStore } from "../../stores";
+
+// ── TYPE 선택지 ───────────────────────────────────────────────────
+const TYPE_COMMON = [
+  "VARCHAR", "CHAR",
+  "INTEGER", "SMALLINT",
+  "DECIMAL", "NUMERIC", "FLOAT", "REAL",
+  "DATE",
+  // ※ 제외: TEXT(Oracle DDL 에러), BIGINT(Oracle DDL 에러), TIMESTAMP(MSSQL=ROWVERSION),
+  //         BOOLEAN(Oracle/MSSQL DDL 에러), CLOB/BLOB(PG/MSSQL DDL 에러)
+] as const;
+
+const TYPE_POSTGRESQL = [
+  "TEXT", "BIGINT", "TIMESTAMP", "BOOLEAN",
+  "INT2", "INT4", "INT8",
+  "SERIAL", "BIGSERIAL", "SMALLSERIAL",
+  "BPCHAR",
+  "FLOAT4", "FLOAT8", "DOUBLE PRECISION",
+  "MONEY",
+  "TIMESTAMPTZ", "INTERVAL",
+  "BYTEA",
+  "JSON", "JSONB", "UUID",
+] as const;
+
+const TYPE_ORACLE = [
+  "TIMESTAMP",
+  "VARCHAR2", "NVARCHAR2", "NCHAR", "CLOB", "NCLOB", "LONG",
+  "NUMBER", "BINARY_FLOAT", "BINARY_DOUBLE",
+  "BLOB", "RAW", "LONG RAW",
+  "TIMESTAMP WITH TIME ZONE", "TIMESTAMP WITH LOCAL TIME ZONE",
+] as const;
+
+const TYPE_MARIADB = [
+  "TEXT", "BIGINT", "TIMESTAMP", "BOOLEAN",
+  "TINYINT", "MEDIUMINT",
+  "DOUBLE",
+  "TINYTEXT", "MEDIUMTEXT", "LONGTEXT",
+  "DATETIME", "YEAR",
+  "BIT",
+  "BINARY", "VARBINARY", "BLOB", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB",
+  "JSON", "ENUM", "SET",
+] as const;
+
+const TYPE_MSSQL = [
+  "TEXT", "BIGINT",
+  "NVARCHAR", "NCHAR", "NTEXT",
+  "TINYINT",
+  "MONEY", "SMALLMONEY",
+  "DATETIME", "DATETIME2", "SMALLDATETIME", "DATETIMEOFFSET",
+  "BIT",
+  "BINARY", "VARBINARY", "IMAGE",
+  "UNIQUEIDENTIFIER", "XML",
+] as const;
+
+const ALL_KNOWN_TYPES = new Set<string>([
+  ...TYPE_COMMON, ...TYPE_POSTGRESQL, ...TYPE_ORACLE, ...TYPE_MARIADB, ...TYPE_MSSQL,
+]);
+
+type DbType = 'POSTGRESQL' | 'ORACLE' | 'MARIADB' | 'MSSQL';
+
+function detectDbType(connectionType: string): DbType | undefined {
+  const t = connectionType.toUpperCase();
+  if (t.includes('POSTGRES'))  return 'POSTGRESQL';
+  if (t.includes('ORACLE'))    return 'ORACLE';
+  if (t.includes('MARIA') || t.includes('MYSQL')) return 'MARIADB';
+  if (t.includes('MSSQL') || t.includes('SQLSERVER')) return 'MSSQL';
+  return undefined;
+}
 
 interface SourceGroup {
   nodeId: string;
@@ -23,6 +94,7 @@ interface OutputTab {
   label: string;
   tableName: string;
   writeMode: string;
+  connectionId: string;
 }
 
 const ROW_COLORS = [
@@ -35,8 +107,8 @@ interface Props {
   nodeLabel: string;
   nodes: Node[];
   edges: Edge[];
-  initialOutputNodeId?: string;                          // 특정 Output 탭으로 바로 열기
-  currentMappingsByOutput: Record<string, MappingRow[]>; // output별 현재 매핑
+  initialOutputNodeId?: string;
+  currentMappingsByOutput: Record<string, MappingRow[]>;
   onApply: (allMappings: Record<string, MappingRow[]>) => void;
   onClose: () => void;
 }
@@ -53,19 +125,33 @@ export default function MappingEditorModal({
 }: Props) {
   const [sourceGroups, setSourceGroups] = useState<SourceGroup[]>([]);
   const [loadingCount, setLoadingCount] = useState(0);
-
-  // Output 탭 목록
   const [outputTabs, setOutputTabs] = useState<OutputTab[]>([]);
   const [activeOutputId, setActiveOutputId] = useState<string>("");
-
-  // Output별 매핑 상태
   const [mappingsByOutput, setMappingsByOutput] = useState<Record<string, MappingRow[]>>({});
-
-  // Output별 타겟 컬럼맵
   const [targetMapsByOutput, setTargetMapsByOutput] = useState<Record<string, Map<string, string>>>({});
-
   const [selectedSourceCol, setSelectedSourceCol] = useState<{ nodeId: string; col: string } | null>(null);
   const [showExprWarning, setShowExprWarning] = useState(false);
+  const [popoverRowId, setPopoverRowId] = useState<string | null>(null);
+  const [showEnhDropdown, setShowEnhDropdown] = useState(false);
+
+  const connections = useAppStore((s) => s.connections);
+
+  // 현재 active output 탭의 DB 타입 (TYPE 드롭다운 필터용)
+  const targetDbType = useMemo<DbType | undefined>(() => {
+    const activeTab = outputTabs.find((t) => t.id === activeOutputId);
+    if (!activeTab?.connectionId) return undefined;
+    const conn = connections.find((c) => c.id === activeTab.connectionId);
+    if (!conn) return undefined;
+    return detectDbType(conn.dbType);
+  }, [outputTabs, activeOutputId, connections]);
+
+  // 드롭다운 외부 클릭 시 닫기
+  useEffect(() => {
+    if (!showEnhDropdown && !popoverRowId) return;
+    const handler = () => { setShowEnhDropdown(false); setPopoverRowId(null); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showEnhDropdown, popoverRowId]);
 
   // ── 소스 그룹 (Input 노드) ─────────────────────────────────────
   useEffect(() => {
@@ -78,60 +164,46 @@ export default function MappingEditorModal({
     const groups: SourceGroup[] = inputNodeIds.map((nid, idx) => {
       const node = nodes.find((n) => n.id === nid);
       const data = (node?.data ?? {}) as Record<string, unknown>;
-      const config = (data.config ?? {}) as Record<string, unknown>;
+      const cfg = (data.config ?? {}) as Record<string, unknown>;
+      const cachedCols = Array.isArray(cfg.columns) ? (cfg.columns as ColumnInfo[]) : [];
       return {
         nodeId: nid,
-        nodeLabel: (data.label as string) ?? nid,
-        connectionId: (config.connectionId as string) ?? "",
-        tableName: (config.tableName as string) ?? "",
-        columns: [],
-        loading: true,
+        nodeLabel: (data.label as string) || nid,
+        connectionId: (cfg.connectionId as string) || "",
+        tableName: (cfg.tableName as string) || "",
+        columns: cachedCols,
+        loading: cachedCols.length === 0,
         color: ROW_COLORS[idx % ROW_COLORS.length],
       };
     });
+
     setSourceGroups(groups);
+    setLoadingCount(groups.filter((g) => g.loading).length);
 
-    groups.forEach((g, idx) => {
-      const node = nodes.find((n) => n.id === g.nodeId);
-      const data = (node?.data ?? {}) as Record<string, unknown>;
-      const config = (data.config ?? {}) as Record<string, unknown>;
-      const cachedCols = Array.isArray(config.columns)
-        ? (config.columns as ColumnInfo[]) : null;
-
-      if (cachedCols && cachedCols.length > 0) {
-        setSourceGroups((prev) =>
-          prev.map((p, i) => i === idx ? { ...p, columns: cachedCols, loading: false } : p)
-        );
-        return;
-      }
+    groups.forEach((g) => {
+      if (!g.loading) return;
       if (!g.connectionId || !g.tableName) {
-        setSourceGroups((prev) =>
-          prev.map((p, i) => i === idx ? { ...p, loading: false } : p)
-        );
+        setSourceGroups((prev) => prev.map((p) => p.nodeId === g.nodeId ? { ...p, loading: false } : p));
+        setLoadingCount((c) => Math.max(0, c - 1));
         return;
       }
-      setLoadingCount((c) => c + 1);
       const parts = g.tableName.split(".");
       const table = parts[parts.length - 1];
       const schema = parts.length > 1 ? parts[0] : undefined;
       schemaApi.getColumns(g.connectionId, table, schema)
         .then((cols) => {
-          setSourceGroups((prev) =>
-            prev.map((p, i) => i === idx ? { ...p, columns: cols, loading: false } : p)
-          );
+          setSourceGroups((prev) => prev.map((p) => p.nodeId === g.nodeId ? { ...p, columns: cols, loading: false } : p));
+          setLoadingCount((c) => Math.max(0, c - 1));
         })
         .catch(() => {
-          setSourceGroups((prev) =>
-            prev.map((p, i) => i === idx ? { ...p, loading: false } : p)
-          );
-        })
-        .finally(() => setLoadingCount((c) => c - 1));
+          setSourceGroups((prev) => prev.map((p) => p.nodeId === g.nodeId ? { ...p, loading: false } : p));
+          setLoadingCount((c) => Math.max(0, c - 1));
+        });
     });
   }, [nodeId, nodes, edges]);
 
   // ── 연결된 모든 T_JDBC_OUTPUT 탐색 (BFS) ──────────────────────
   useEffect(() => {
-    // ROW 엣지 forward BFS
     const rowEdgesBySource: Record<string, string[]> = {};
     edges.forEach((e) => {
       const lt = (e.data as Record<string, unknown>)?.linkType as string | undefined;
@@ -159,20 +231,18 @@ export default function MappingEditorModal({
             label: (data.label as string) || "Output",
             tableName: (cfg.tableName as string) || "",
             writeMode: (cfg.writeMode as string) || "INSERT",
+            connectionId: (cfg.connectionId as string) || "",
           });
-          continue; // Output 아래는 더 탐색 안 함
+          continue;
         }
       }
       (rowEdgesBySource[cur] || []).forEach((t) => queue.push(t));
     }
 
     setOutputTabs(foundOutputs);
-
-    // 초기 활성 탭: initialOutputNodeId 우선, 없으면 첫 번째
     const firstId = initialOutputNodeId ?? foundOutputs[0]?.id ?? "";
     setActiveOutputId(firstId);
 
-    // 매핑 초기화: currentMappingsByOutput에서 로드, 없으면 빈 배열
     const initial: Record<string, MappingRow[]> = {};
     foundOutputs.forEach((o) => {
       const existing = currentMappingsByOutput[o.id];
@@ -185,7 +255,7 @@ export default function MappingEditorModal({
             sourceColumn: (raw.sourceColumn as string) || "",
             targetName: (raw.targetName as string) || (raw.outputColumn as string) || "",
             expression: (raw.expression as string) || "",
-            type: (raw.type as string) || "VARCHAR",
+            type: ((raw.type as string) || "VARCHAR").toUpperCase(),
           };
         });
       } else {
@@ -194,7 +264,6 @@ export default function MappingEditorModal({
     });
     setMappingsByOutput(initial);
 
-    // 각 Output의 타겟 컬럼맵 로드
     foundOutputs.forEach((out) => {
       const node = nodes.find((n) => n.id === out.id);
       if (!node) return;
@@ -204,7 +273,7 @@ export default function MappingEditorModal({
 
       if (cachedCols && cachedCols.length > 0) {
         const map = new Map<string, string>();
-        cachedCols.forEach((c) => map.set(c.columnName.toLowerCase(), c.dataType));
+        cachedCols.forEach((c) => map.set(c.columnName.toLowerCase(), c.dataType.toUpperCase()));
         setTargetMapsByOutput((prev) => ({ ...prev, [out.id]: map }));
         return;
       }
@@ -219,7 +288,7 @@ export default function MappingEditorModal({
       schemaApi.getColumns(connId, table, schema)
         .then((cols) => {
           const map = new Map<string, string>();
-          cols.forEach((c) => map.set(c.columnName.toLowerCase(), c.dataType));
+          cols.forEach((c) => map.set(c.columnName.toLowerCase(), c.dataType.toUpperCase()));
           setTargetMapsByOutput((prev) => ({ ...prev, [out.id]: map }));
         })
         .catch(() => {});
@@ -257,15 +326,13 @@ export default function MappingEditorModal({
     g.columns.map((c) => ({ nodeId: g.nodeId, nodeLabel: g.nodeLabel, col: c, color: g.color }))
   );
 
-  // ── Auto Map (현재 활성 탭 기준) ──────────────────────────────
+  // ── Auto Map ─────────────────────────────────────────────────
   const handleAutoMap = () => {
     const ts = Date.now();
     if (activeTargetMap.size > 0) {
       const auto: MappingRow[] = Array.from(activeTargetMap.entries()).map(
         ([targetCol, targetType], idx) => {
-          const matched = allSourceCols.find(
-            ({ col }) => col.columnName.toLowerCase() === targetCol
-          );
+          const matched = allSourceCols.find(({ col }) => col.columnName.toLowerCase() === targetCol);
           if (matched) {
             return buildAutoMappings(matched.nodeId, [matched.col], activeTargetMap)[0];
           }
@@ -287,6 +354,12 @@ export default function MappingEditorModal({
       setActiveMappings(auto);
     }
     setSelectedSourceCol(null);
+  };
+
+  // 소스 컬럼 타입 조회
+  const getSourceType = (nid: string, colName: string): string => {
+    const g = sourceGroups.find((g) => g.nodeId === nid);
+    return g?.columns.find((c) => c.columnName === colName)?.dataType ?? "";
   };
 
   const handleSourceClick = (nid: string, colName: string) => {
@@ -323,13 +396,16 @@ export default function MappingEditorModal({
 
   const handleTargetClick = (rowId: string) => {
     if (!selectedSourceCol) return;
-    const col = allSourceCols.find(
-      (c) => c.nodeId === selectedSourceCol.nodeId && c.col.columnName === selectedSourceCol.col
-    );
     setActiveMappings(
       activeMappings.map((m) =>
         m.id === rowId
-          ? { ...m, sourceNodeId: selectedSourceCol.nodeId, sourceColumn: selectedSourceCol.col, type: col?.col.dataType ?? m.type }
+          ? {
+              ...m,
+              sourceNodeId: selectedSourceCol.nodeId,
+              sourceColumn: selectedSourceCol.col,
+              // 타겟 타입 우선, 없으면 기존 타입 유지
+              type: activeTargetMap.get(m.targetName.toLowerCase()) ?? m.type,
+            }
           : m
       )
     );
@@ -363,6 +439,22 @@ export default function MappingEditorModal({
     onClose();
   };
 
+  // 일괄 Enhancement 적용
+  const handleApplyBulkEnh = (enhId: string) => {
+    const enh = BULK_ENHANCEMENTS.find((e) => e.id === enhId);
+    if (!enh) return;
+    setActiveMappings(
+      activeMappings.map((m) => {
+        const family = normalizeType(m.type);
+        if (!enh.applyTo.includes(family)) return m;
+        const col = m.sourceColumn || m.targetName;
+        if (!col) return m;
+        return { ...m, expression: enh.apply(col, family) };
+      })
+    );
+    setShowEnhDropdown(false);
+  };
+
   const writeModeColors: Record<string, { bg: string; text: string }> = {
     INSERT:          { bg: "#dbeafe", text: "#1d4ed8" },
     TRUNCATE_INSERT: { bg: "#fef9c3", text: "#92400e" },
@@ -376,7 +468,7 @@ export default function MappingEditorModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
       <div
-        className="relative w-full max-w-6xl h-[85vh] rounded-xl shadow-2xl flex flex-col"
+        className="relative w-full max-w-6xl h-[75vh] rounded-xl shadow-2xl flex flex-col"
         style={{ background: "#ffffff", border: "1px solid #e2e8f0" }}
       >
         {/* Header */}
@@ -473,11 +565,10 @@ export default function MappingEditorModal({
             </div>
           </div>
 
-          {/* RIGHT: Target Mappings (Output 탭) */}
+          {/* RIGHT: Target Mappings */}
           <div className="flex-1 flex flex-col min-w-0">
             {/* Output 탭 헤더 */}
             <div className="flex items-center flex-shrink-0" style={{ borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}>
-              {/* 탭 버튼 */}
               <div className="flex flex-1 overflow-x-auto">
                 {outputTabs.length === 0 ? (
                   <div className="px-4 py-2 text-xs text-[#94a3b8]">
@@ -518,9 +609,11 @@ export default function MappingEditorModal({
                   })
                 )}
               </div>
-              {/* Auto Map / Clear 버튼 */}
+
+              {/* 버튼 영역 */}
               {activeOutputId && (
                 <div className="flex items-center gap-2 px-3 flex-shrink-0" style={{ borderLeft: "1px solid #e2e8f0" }}>
+                  {/* Auto Map */}
                   <button onClick={handleAutoMap}
                     className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-[#2563eb]
                       bg-[#eff6ff] border border-[#93c5fd] rounded hover:bg-[#dbeafe] transition-colors">
@@ -529,6 +622,48 @@ export default function MappingEditorModal({
                     </svg>
                     Auto Map
                   </button>
+
+                  {/* Enhancements 드롭다운 */}
+                  <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => setShowEnhDropdown((v) => !v)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-[#ca8a04]
+                        bg-[#fefce8] border border-[#fde68a] rounded hover:bg-[#fef9c3] transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3l14 9-14 9V3z" />
+                      </svg>
+                      Enhancements ▾
+                    </button>
+                    {showEnhDropdown && (
+                      <div className="absolute right-0 top-full mt-1 w-64 rounded-lg shadow-xl z-20"
+                        style={{ background: "#ffffff", border: "1px solid #e2e8f0" }}>
+                        {BULK_ENHANCEMENTS.map((enh) => (
+                          <button
+                            key={enh.id}
+                            onClick={() => handleApplyBulkEnh(enh.id)}
+                            className="flex flex-col w-full px-3 py-2 text-left hover:bg-[#f8fafc] transition-colors"
+                            style={{ borderBottom: "1px solid #f1f5f9" }}
+                          >
+                            <span className="text-xs font-medium text-[#374151]">{enh.label}</span>
+                            <span className="text-[10px] text-[#94a3b8]">{enh.description}</span>
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => {
+                            setActiveMappings(activeMappings.map((m) => ({ ...m, expression: "" })));
+                            setShowEnhDropdown(false);
+                          }}
+                          className="flex flex-col w-full px-3 py-2 text-left hover:bg-[#fef2f2] transition-colors"
+                        >
+                          <span className="text-xs font-medium text-[#dc2626]">Expression 초기화</span>
+                          <span className="text-[10px] text-[#94a3b8]">전체 행의 Expression을 비웁니다</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Clear */}
                   <button onClick={() => setActiveMappings([])}
                     className="px-2.5 py-1.5 text-xs text-[#64748b] hover:text-[#dc2626]
                       bg-[#f8fafc] rounded border border-[#d1d5db] transition-colors">
@@ -538,17 +673,16 @@ export default function MappingEditorModal({
               )}
             </div>
 
-            {/* 활성 Output 없을 때 */}
             {!activeOutputId && (
               <div className="flex-1 flex items-center justify-center">
                 <p className="text-sm text-[#94a3b8]">Output 탭을 선택하세요</p>
               </div>
             )}
 
-            {/* 컬럼 헤더 */}
             {activeOutputId && (
               <>
-                <div className="grid grid-cols-[24px_1fr_1fr_1fr_80px_32px] gap-0 px-4 py-1.5
+                {/* 컬럼 헤더 */}
+                <div className="grid grid-cols-[24px_1fr_1fr_1fr_90px_24px_32px] gap-0 px-4 py-1.5
                   text-[10px] font-semibold text-[#64748b] uppercase tracking-wider flex-shrink-0"
                   style={{ borderBottom: "1px solid #e2e8f0", background: "#f1f5f9" }}>
                   <div />
@@ -556,6 +690,7 @@ export default function MappingEditorModal({
                   <div>Target Name</div>
                   <div>Expression</div>
                   <div>Type</div>
+                  <div />
                   <div />
                 </div>
 
@@ -586,16 +721,34 @@ export default function MappingEditorModal({
                       {activeMappings.map((m) => {
                         const color = m.sourceNodeId ? getSourceColor(m.sourceNodeId) : "#94a3b8";
                         const isClickTarget = !!selectedSourceCol;
+
+                        // Tier 1: 타입 불일치 감지
+                        const srcType = getSourceType(m.sourceNodeId, m.sourceColumn);
+                        const tgtType = activeTargetMap.get(m.targetName.toLowerCase()) ?? m.type;
+                        const castResult = srcType && m.sourceColumn
+                          ? resolveCast(srcType, tgtType, m.sourceColumn)
+                          : { castRequired: false, expression: "", severity: "none" as const, warning: undefined };
+
+                        const rowBg =
+                          castResult.severity === "warning" ? "#fffbeb" :
+                          castResult.severity === "danger"  ? "#fef2f2" : undefined;
+
+                        // Tier 2: Enhancement 목록
+                        const enhList = ENHANCEMENTS[normalizeType(m.type)] ?? [];
+
                         return (
                           <div key={m.id}
-                            onClick={() => isClickTarget && handleTargetClick(m.id)}
-                            className={`grid grid-cols-[24px_1fr_1fr_1fr_80px_32px] gap-0 items-center
+                            onClick={() => { if (isClickTarget) handleTargetClick(m.id); setPopoverRowId(null); }}
+                            className={`grid grid-cols-[24px_1fr_1fr_1fr_90px_24px_32px] gap-0 items-center
                               px-4 py-1.5 group transition-colors
                               ${isClickTarget ? "cursor-pointer hover:bg-[#eff6ff]" : "hover:bg-[#f8fafc]"}`}
-                            style={{ borderBottom: "1px solid #f1f5f9" }}>
+                            style={{ borderBottom: "1px solid #f1f5f9", background: rowBg }}>
+
+                            {/* 색상 점 */}
                             <div>
                               <span className="w-2 h-2 rounded-full block" style={{ backgroundColor: color }} />
                             </div>
+
                             {/* Source Column */}
                             <div className="pr-2">
                               <select
@@ -622,6 +775,7 @@ export default function MappingEditorModal({
                                 ))}
                               </select>
                             </div>
+
                             {/* Target Name */}
                             <div className="pr-2">
                               <input
@@ -636,28 +790,114 @@ export default function MappingEditorModal({
                                     ? "text-[#dc2626]" : "text-[#374151]"}`}
                               />
                             </div>
+
                             {/* Expression */}
                             <div className="pr-2">
                               <input
                                 value={m.expression}
                                 onChange={(e) => updateMapping(m.id, "expression", e.target.value)}
                                 onClick={(e) => e.stopPropagation()}
-                                placeholder="UPPER(col)"
-                                className="w-full bg-transparent text-xs text-[#7c3aed] font-mono
-                                  focus:outline-none border-b border-transparent focus:border-[#2563eb] py-0.5"
+                                placeholder="expression"
+                                className={`w-full bg-transparent text-xs text-[#7c3aed] font-mono
+                                  focus:outline-none border-b border-transparent focus:border-[#2563eb] py-0.5
+                                  ${!m.sourceColumn && !m.expression
+                                    ? "placeholder:text-[#dc2626]"
+                                    : "placeholder:text-[#94a3b8]"}`}
                               />
                             </div>
-                            {/* Type */}
-                            <div className="pr-2">
+
+                            {/* Type + cast 경고 아이콘 */}
+                            <div className="pr-1 flex items-center gap-0.5 overflow-hidden">
                               <select value={m.type}
                                 onChange={(e) => updateMapping(m.id, "type", e.target.value)}
                                 onClick={(e) => e.stopPropagation()}
-                                className="w-full bg-transparent text-xs text-[#64748b] focus:outline-none border-0 cursor-pointer">
-                                {["VARCHAR","INTEGER","BIGINT","DECIMAL","DATE","TIMESTAMP","BOOLEAN","CLOB","BLOB"].map((t) => (
-                                  <option key={t} value={t}>{t}</option>
-                                ))}
+                                className="flex-1 min-w-0 bg-transparent text-xs text-[#64748b] focus:outline-none border-0 cursor-pointer">
+                                {!ALL_KNOWN_TYPES.has(m.type) && (
+                                  <option value={m.type}>{m.type}</option>
+                                )}
+                                {TYPE_COMMON.map((t) => <option key={t} value={t}>{t}</option>)}
+                                {(!targetDbType || targetDbType === 'POSTGRESQL') && (
+                                  <optgroup label="─── PostgreSQL ───">
+                                    {TYPE_POSTGRESQL.map((t) => <option key={t} value={t}>{t}</option>)}
+                                  </optgroup>
+                                )}
+                                {(!targetDbType || targetDbType === 'ORACLE') && (
+                                  <optgroup label="──── Oracle ────">
+                                    {TYPE_ORACLE.map((t) => <option key={t} value={t}>{t}</option>)}
+                                  </optgroup>
+                                )}
+                                {(!targetDbType || targetDbType === 'MARIADB') && (
+                                  <optgroup label="── MariaDB / MySQL ──">
+                                    {TYPE_MARIADB.map((t) => <option key={t} value={t}>{t}</option>)}
+                                  </optgroup>
+                                )}
+                                {(!targetDbType || targetDbType === 'MSSQL') && (
+                                  <optgroup label="──── MS SQL ────">
+                                    {TYPE_MSSQL.map((t) => <option key={t} value={t}>{t}</option>)}
+                                  </optgroup>
+                                )}
                               </select>
+                              {castResult.severity !== "none" && (
+                                <button
+                                  title={castResult.warning ?? "타입 변환 필요"}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (castResult.expression) {
+                                      updateMapping(m.id, "expression", castResult.expression);
+                                    }
+                                  }}
+                                  className="flex-shrink-0 text-sm leading-none hover:opacity-70 transition-opacity cursor-pointer"
+                                >
+                                  {castResult.severity === "danger" ? "❌" : castResult.severity === "warning" ? "⚠️" : "ℹ️"}
+                                </button>
+                              )}
                             </div>
+
+                            {/* 💡 Enhancement 팝오버 */}
+                            {/* <div className="flex justify-center relative" onMouseDown={(e) => e.stopPropagation()}>
+                              {enhList.length > 0 && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPopoverRowId(popoverRowId === m.id ? null : m.id);
+                                  }}
+                                  title="Expression 추천"
+                                  className="text-sm leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+                                  style={{ color: "#ca8a04" }}
+                                >
+                                  💡
+                                </button>
+                              )}
+                              {popoverRowId === m.id && (
+                                <div
+                                  className="absolute right-0 bottom-full mb-1 w-52 rounded-lg shadow-xl z-30"
+                                  style={{ background: "#ffffff", border: "1px solid #e2e8f0" }}
+                                >
+                                  <div className="px-3 py-1.5" style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                    <p className="text-[10px] font-semibold text-[#64748b] uppercase">
+                                      {normalizeType(m.type)} 표현식 추천
+                                    </p>
+                                  </div>
+                                  {enhList.map((enh) => (
+                                    <button
+                                      key={enh.label}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const col = m.sourceColumn || m.targetName;
+                                        if (col) updateMapping(m.id, "expression", enh.apply(col));
+                                        setPopoverRowId(null);
+                                      }}
+                                      className="flex items-center justify-between w-full px-3 py-1.5 text-left hover:bg-[#f8fafc] transition-colors"
+                                      style={{ borderBottom: "1px solid #f1f5f9" }}
+                                    >
+                                      <span className="text-xs font-mono text-[#374151]">{enh.label}</span>
+                                      <span className="text-[10px] text-[#94a3b8]">{enh.description}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div> */}
+
                             {/* Delete */}
                             <div className="flex justify-center">
                               <button
@@ -674,6 +914,7 @@ export default function MappingEditorModal({
                       })}
                     </>
                   )}
+
                   {/* Add Row */}
                   <button onClick={handleAddRow}
                     className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-[#64748b]

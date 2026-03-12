@@ -1,4 +1,4 @@
-export type DbType = 'POSTGRESQL' | 'ORACLE' | 'MARIADB'
+export type DbType = 'POSTGRESQL' | 'ORACLE' | 'MARIADB' | 'MYSQL' | 'MSSQL'
 export type JobStatus = 'DRAFT' | 'PUBLISHED'
 export type ExecutionStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED'
 export type EngineType = 'SQL_PUSHDOWN' | 'PYTHON_WORKER' | 'JVM_WORKER'

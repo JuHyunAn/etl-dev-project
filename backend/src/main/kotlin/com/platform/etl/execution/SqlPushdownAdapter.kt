@@ -39,18 +39,42 @@ class SqlPushdownAdapter(
         // tMap → tOutput 타겟 컬럼 존재 여부 검사
         // (tOutput.config.columns가 캐시돼 있을 때만 검사)
         ir.nodes.filter { it.type == ComponentType.T_MAP }.forEach { mapNode ->
-            val mappings = parseMappingsForValidation(mapNode.config["mappings"])
-            if (mappings.isEmpty()) return@forEach
+            @Suppress("UNCHECKED_CAST")
+            val outputMappings = mapNode.config["outputMappings"] as? Map<String, Any?>
 
-            val outputNode = findDownstreamOutput(mapNode.id, ir) ?: return@forEach
-            val targetCols = parseTargetColumns(outputNode.config["columns"])
-            if (targetCols.isEmpty()) return@forEach  // 컬럼 캐시 없으면 검사 skip
+            if (!outputMappings.isNullOrEmpty()) {
+                // outputMappings[outputId] 방식 — Output별 각각 검증
+                outputMappings.forEach { (outputId, rawMappings) ->
+                    val mappings = parseMappingsForValidation(rawMappings)
+                    if (mappings.isEmpty()) return@forEach
 
-            mappings.forEach { (targetName) ->
-                if (targetName.isNotBlank() &&
-                    targetCols.none { it.equals(targetName, ignoreCase = true) }
-                ) {
-                    errors += "[tMap '${mapNode.label}'] 타겟 컬럼 '${targetName}'이(가) 타겟 테이블에 존재하지 않습니다"
+                    val outputNode = ir.nodes.find { it.id == outputId } ?: return@forEach
+                    val targetCols = parseTargetColumns(outputNode.config["columns"])
+                    if (targetCols.isEmpty()) return@forEach  // 컬럼 캐시 없으면 skip
+
+                    mappings.forEach { (targetName) ->
+                        if (targetName.isNotBlank() &&
+                            targetCols.none { it.equals(targetName, ignoreCase = true) }
+                        ) {
+                            errors += "[tMap '${mapNode.label}'] 타겟 컬럼 '${targetName}'이(가) '${outputNode.label}' 테이블에 존재하지 않습니다"
+                        }
+                    }
+                }
+            } else {
+                // legacy: config["mappings"] + 다운스트림 첫 번째 Output
+                val mappings = parseMappingsForValidation(mapNode.config["mappings"])
+                if (mappings.isEmpty()) return@forEach
+
+                val outputNode = findDownstreamOutput(mapNode.id, ir) ?: return@forEach
+                val targetCols = parseTargetColumns(outputNode.config["columns"])
+                if (targetCols.isEmpty()) return@forEach
+
+                mappings.forEach { (targetName) ->
+                    if (targetName.isNotBlank() &&
+                        targetCols.none { it.equals(targetName, ignoreCase = true) }
+                    ) {
+                        errors += "[tMap '${mapNode.label}'] 타겟 컬럼 '${targetName}'이(가) 타겟 테이블에 존재하지 않습니다"
+                    }
                 }
             }
         }

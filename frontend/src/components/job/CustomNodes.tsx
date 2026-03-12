@@ -1,6 +1,15 @@
 import React, { memo, useCallback } from 'react'
 import { Handle, Position, NodeProps, NodeToolbar, useReactFlow } from '@xyflow/react'
 import type { ComponentType } from '../../types'
+import { useAppStore } from '../../stores'
+
+const DB_ICON: Record<string, string> = {
+  POSTGRESQL: '/psql.png',
+  ORACLE:     '/oracle.png',
+  MARIADB:    '/mariadb.png',
+  MYSQL:      '/mysql.png',
+  MSSQL:      '/mssql.png',
+}
 
 interface NodeData {
   label: string
@@ -137,6 +146,12 @@ const ETLNode = memo(({ id, data, selected }: NodeProps) => {
   const nodeData = data as unknown as NodeData
   const meta = getGroupMeta(nodeData.componentType)
   const status = nodeData.status ?? 'idle'
+
+  const connections = useAppStore(s => s.connections)
+  const isJdbc = nodeData.componentType === 'T_JDBC_INPUT' || nodeData.componentType === 'T_JDBC_OUTPUT'
+  const dbIconSrc = isJdbc
+    ? DB_ICON[connections.find(c => c.id === (nodeData.config?.connectionId as string))?.dbType ?? '']
+    : undefined
 
   const isInputOnly  = nodeData.componentType === 'T_PRE_JOB'
   const isOutputOnly = nodeData.componentType === 'T_POST_JOB'
@@ -326,6 +341,25 @@ const ETLNode = memo(({ id, data, selected }: NodeProps) => {
                 {nodeData.config.writeMode as string}
               </span>
             </div>
+          )}
+
+          {/* DB 아이콘 */}
+          {dbIconSrc && (
+            <img
+              src={dbIconSrc}
+              alt=""
+              style={{
+                position: 'absolute',
+                top: '50%',
+                right: 7,
+                transform: 'translateY(-50%)',
+                width: 38,
+                height: 38,
+                objectFit: 'contain',
+                opacity: 0.8,
+                pointerEvents: 'none',
+              }}
+            />
           )}
         </div>
       </div>

@@ -472,6 +472,8 @@ export default function JobDesignerPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [running, setRunning] = useState(false);
   const [bottomPanel, setBottomPanel] = useState<BottomPanel>("sql");
   const [executionResult, setExecutionResult] =
@@ -914,6 +916,7 @@ export default function JobDesignerPage() {
       const ir = flowToIR(jobId, nodes, edges, ctxMap);
       const updated = await jobsApi.update(projectId, jobId, { irJson: JSON.stringify(ir) });
       upsertJob(projectId, updated);
+      setIsDirty(false);
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 2000);
     } finally {
@@ -921,23 +924,18 @@ export default function JobDesignerPage() {
     }
   };
 
-  // 자동저장: 로딩 완료 후 nodes/edges/contextVars 변경 시 2초 debounce
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 로드 완료 후 일정 시간이 지난 뒤부터만 dirty 추적 (초기 데이터 세팅과 구분)
+  const dirtyTrackingRef = useRef(false);
   useEffect(() => {
-    if (loading || !projectId || !jobId) return;
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(async () => {
-      try {
-        const ctxMap = buildCtxMap(contextVars);
-        const ir = flowToIR(jobId, nodes, edges, ctxMap);
-        const updated = await jobsApi.update(projectId, jobId, { irJson: JSON.stringify(ir) });
-        upsertJob(projectId, updated);
-      } catch {}
-    }, 2000);
-    return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    };
-  }, [nodes, edges, contextVars, projectId, jobId]);
+    if (loading) return;
+    const t = setTimeout(() => { dirtyTrackingRef.current = true; }, 300);
+    return () => clearTimeout(t);
+  }, [loading]);
+
+  useEffect(() => {
+    if (!dirtyTrackingRef.current) return;
+    setIsDirty(true);
+  }, [nodes, edges, contextVars]);
 
   const handlePublish = async () => {
     if (!projectId || !jobId) return;
@@ -1252,8 +1250,8 @@ export default function JobDesignerPage() {
         style={{ background: "#232b37", borderBottom: "1px solid #232b37" }}
       >
         <button
-          onClick={() => navigate(`/projects/${projectId}`)}
-          className="text-[#94a3b8] hover:text-[#374151] transition-colors p-1"
+          onClick={() => isDirty ? setShowLeaveConfirm(true) : navigate(`/projects/${projectId}`)}
+          className="text-[#94a3b8] hover:text-white transition-colors p-1"
         >
           <svg
             className="w-4 h-4"
@@ -1387,35 +1385,46 @@ export default function JobDesignerPage() {
 
           <div className="h-4 w-px bg-[#e2e8f0]" />
 
-          <Button
-            variant={savedFlash ? "success" : "secondary"}
-            size="sm"
-            onClick={handleSave}
-            disabled={saving}
-          >
-            {saving ? (
-              <Spinner size="sm" />
-            ) : savedFlash ? (
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            ) : (
-              <svg
-                className="w-3.5 h-3.5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"
-                />
-              </svg>
+          <div className="relative">
+            <Button
+              variant={savedFlash ? "success" : "secondary"}
+              size="sm"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? (
+                <Spinner size="sm" />
+              ) : savedFlash ? (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg
+                  className="w-3.5 h-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"
+                  />
+                </svg>
+              )}
+              {savedFlash ? "Saved" : "Save"}
+            </Button>
+            {isDirty && !savedFlash && (
+              <span
+                className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full"
+                style={{
+                  background: "#dc2626",
+                  boxShadow: "0 0 4px 1px rgba(220,38,38,0.7), inset 0 1px 1px rgba(255,180,180,0.4)",
+                }}
+              />
             )}
-            {savedFlash ? "Saved" : "Save"}
-          </Button>
+          </div>
           <Button
             variant="secondary"
             size="sm"
@@ -2423,6 +2432,53 @@ export default function JobDesignerPage() {
           }}
           onClose={() => setMappingTarget(null)}
         />
+      )}
+
+      {/* 이탈 확인 다이얼로그 */}
+      {showLeaveConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={() => setShowLeaveConfirm(false)}
+        >
+          <div
+            className="rounded-xl shadow-2xl p-6 flex flex-col gap-4 w-[340px]"
+            style={{ background: "#ffffff", border: "1px solid #e2e8f0" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center" style={{ background: "#fff7ed" }}>
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="#f97316">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-[#111827]">저장하지 않은 변경사항</p>
+                <p className="text-xs text-[#6b7280] mt-1">변경된 사항이 있습니다. 저장하시겠습니까?</p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => { setShowLeaveConfirm(false); navigate(`/projects/${projectId}`); }}
+                className="px-4 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                style={{ background: "#f1f5f9", color: "#374151", border: "1px solid #e2e8f0" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#e2e8f0")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+              >
+                아니오
+              </button>
+              <button
+                onClick={async () => { await handleSave(); navigate(`/projects/${projectId}`); }}
+                className="px-4 py-1.5 rounded-lg text-xs font-medium text-white transition-colors"
+                style={{ background: "#2563eb", border: "1px solid #1d4ed8" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#1d4ed8")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "#2563eb")}
+              >
+                예 (저장 후 이동)
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
