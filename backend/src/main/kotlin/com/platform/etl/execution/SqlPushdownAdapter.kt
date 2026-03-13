@@ -702,36 +702,21 @@ class SqlPushdownAdapter(
         }
     }
 
-    // ── T_LOG_ROW: upstream 쿼리 실행 후 샘플 rows 캡처 ─────────
+    // ── T_LOG_ROW: upstream CTE 체인 실행 후 샘플 rows 캡처 ─────────
 
     private fun executeLogRowNode(
         node: NodeIR, plan: ExecutionPlan,
         logs: MutableList<String>, startMs: Long
     ): NodeResult {
         return try {
-            val inputNode = findUpstreamInputNode(node.id, plan.ir)
-                ?: run {
-                    logs += "[LOG] '${node.label}': upstream Input 노드를 찾을 수 없습니다"
-                    return NodeResult(node.id, node.type.name, ExecutionStatus.SUCCESS,
-                        durationMs = System.currentTimeMillis() - startMs)
-                }
-
-            val connId = inputNode.config["connectionId"]?.toString()
-                ?: return NodeResult(node.id, node.type.name, ExecutionStatus.FAILED,
-                    durationMs = System.currentTimeMillis() - startMs,
-                    errorMessage = "upstream connectionId 미설정")
-
-            val conn     = connectionService.get(java.util.UUID.fromString(connId))
+            val query = compiler.compileForLogRow(plan, node)
+            val conn     = connectionService.get(query.connectionId)
             val jdbcUrl  = connectionService.buildJdbcUrl(conn)
             val password = connectionService.getDecryptedPassword(conn.id)
-            val sourceQuery = inputNode.config["query"]?.toString()
-                ?: "SELECT * FROM ${inputNode.config["tableName"]}"
-
-            val sampleSql = "SELECT * FROM ($sourceQuery) _logrow LIMIT 100"
 
             DriverManager.getConnection(jdbcUrl, conn.username, password).use { jdbc ->
                 jdbc.createStatement().use { stmt ->
-                    stmt.executeQuery(sampleSql).use { rs ->
+                    stmt.executeQuery(query.sql).use { rs ->
                         val meta = rs.metaData
                         val columns = (1..meta.columnCount).map { meta.getColumnName(it) }
                         val rows = mutableListOf<List<Any?>>()
@@ -754,25 +739,6 @@ class SqlPushdownAdapter(
                 durationMs = System.currentTimeMillis() - startMs,
                 errorMessage = e.message)
         }
-    }
-
-    private fun findUpstreamInputNode(nodeId: String, ir: com.platform.etl.ir.JobIR): NodeIR? {
-        val visited = mutableSetOf<String>()
-        val queue = ArrayDeque<String>()
-        queue += nodeId
-        while (queue.isNotEmpty()) {
-            val current = queue.removeFirst()
-            if (!visited.add(current)) continue
-            val upstreamIds = ir.edges
-                .filter { it.target == current && it.linkType == com.platform.etl.ir.LinkType.ROW }
-                .map { it.source }
-            for (srcId in upstreamIds) {
-                val srcNode = ir.nodes.find { it.id == srcId } ?: continue
-                if (srcNode.type == com.platform.etl.ir.ComponentType.T_JDBC_INPUT) return srcNode
-                queue += srcId
-            }
-        }
-        return null
     }
 
     // ── Trigger 조건 체크 + ROW 연쇄 SKIP ───────────────────────

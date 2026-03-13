@@ -643,7 +643,7 @@ function ScheduleDetail({
             <button onClick={handleTrigger} disabled={triggerLoading}
               className="px-3 py-1.5 text-xs rounded-lg text-white disabled:opacity-50"
               style={{ background: "#2563eb" }}>
-              {triggerLoading ? <Spinner size="sm" /> : "▶ 수동 실행"}
+              {triggerLoading ? <Spinner size="sm" /> : "수동 실행"}
             </button>
             <button onClick={() => onDelete(schedule.id)}
               className="px-3 py-1.5 text-xs rounded-lg"

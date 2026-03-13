@@ -111,6 +111,52 @@ class SqlPushdownCompiler(
         return compile(plan, outputNode)
     }
 
+    data class LogRowQuery(val sql: String, val connectionId: UUID)
+
+    /**
+     * tLog 노드까지의 CTE 체인을 빌드하여 실행 가능한 SELECT 쿼리를 반환합니다.
+     * tMap 등 upstream 변환이 적용된 실제 데이터 흐름을 캡처합니다.
+     */
+    fun compileForLogRow(plan: ExecutionPlan, logNode: NodeIR, maxRows: Int = 100): LogRowQuery {
+        val ir = plan.ir
+        val incomingEdges = ir.edges.groupBy { it.target }
+
+        val upstreamIds = collectUpstreamIds(logNode.id, ir)
+
+        val inputNode = ir.nodes.find { it.id in upstreamIds && it.type == ComponentType.T_JDBC_INPUT }
+            ?: throw IllegalStateException("tLog '${logNode.label}': upstream INPUT 노드를 찾을 수 없습니다")
+        val connId = inputNode.config["connectionId"]?.toString()
+            ?: throw IllegalStateException("tLog '${logNode.label}': upstream connectionId 미설정")
+
+        val ctes = mutableListOf<Pair<String, String>>()
+        for (nodeId in plan.sortedNodeIds) {
+            val node = ir.nodes.find { it.id == nodeId } ?: continue
+            if (node.type == ComponentType.T_JDBC_OUTPUT) continue
+            if (nodeId !in upstreamIds) continue
+
+            val predecessorIds = (incomingEdges[nodeId] ?: emptyList())
+                .filter { it.linkType == LinkType.ROW }
+                .map { it.source }
+            val prevCte = predecessorIds.firstOrNull()?.let { cteNameOf(it) }
+
+            val body = buildCteSql(node, prevCte, predecessorIds) ?: continue
+            ctes.add(cteNameOf(nodeId) to body)
+        }
+
+        require(ctes.isNotEmpty()) { "tLog '${logNode.label}'에 연결된 컴파일 가능한 노드가 없습니다" }
+
+        val finalCte = ctes.last().first
+        val withClause = "WITH\n" + ctes.joinToString(",\n\n") { (name, body) ->
+            val indented = body.trimIndent().replace("\n", "\n  ")
+            "$name AS (\n  $indented\n)"
+        }
+
+        return LogRowQuery(
+            sql = "$withClause\nSELECT * FROM $finalCte LIMIT $maxRows",
+            connectionId = UUID.fromString(connId)
+        )
+    }
+
     // ── CTE 이름 생성 (nodeId의 특수문자 → 언더스코어) ──────────
     fun cteNameOf(nodeId: String): String =
         "cte_${nodeId.replace(Regex("[^a-zA-Z0-9]"), "_")}"

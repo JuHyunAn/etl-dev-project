@@ -1235,13 +1235,6 @@ export default function JobDesignerPage() {
     };
   }, [nodes, edges]);
 
-  if (loading)
-    return (
-      <div className="flex items-center justify-center h-full">
-        <Spinner size="lg" />
-      </div>
-    );
-
   return (
     <div className="flex flex-col h-screen" style={{ background: "#f0f4f8" }}>
       {/* Toolbar */}
@@ -1523,6 +1516,11 @@ export default function JobDesignerPage() {
               backgroundColor: "#f8fafc",
             }}
           >
+            {loading && (
+              <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/80">
+                <Spinner size="lg" />
+              </div>
+            )}
             <ReactFlow
               nodes={nodes}
               edges={edges}
