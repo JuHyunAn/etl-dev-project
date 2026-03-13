@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service
 import java.time.LocalDateTime
 import java.time.Duration
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class ExecutionSummaryDto(
     val id: UUID,
@@ -32,73 +34,118 @@ class ExecutionService(
     private val jobRepository: JobRepository,
     private val executionRepository: ExecutionRepository,
     private val sqlPushdownAdapter: SqlPushdownAdapter,
+    private val executionRouter: ExecutionRouter,
+    private val executionLockService: ExecutionLockService,
     private val objectMapper: ObjectMapper,
     private val contextFunctionEvaluator: ContextFunctionEvaluator
 ) {
+    private val log = org.slf4j.LoggerFactory.getLogger(javaClass)
+    // cancelToken → cancelFlag 레지스트리
+    private val cancelRegistry = ConcurrentHashMap<String, AtomicBoolean>()
+
+    fun cancel(cancelToken: String): Boolean {
+        val flag = cancelRegistry[cancelToken] ?: return false
+        flag.set(true)
+        log.info("[CANCEL] cancelToken=$cancelToken 취소 요청")
+        return true
+    }
+
     fun execute(
         jobId: UUID,
         context: Map<String, String> = emptyMap(),
         previewMode: Boolean = false,
-        triggeredBy: String = "manual"
+        triggeredBy: String = "manual",
+        cancelToken: String? = null
     ): ExecutionResult {
-        val job = jobService.get(jobId)
-        val ir = objectMapper.readValue(job.irJson, JobIR::class.java)
-        val plan = buildPlan(jobId, ir, context, previewMode)
-
-        // 실행 시작 — RUNNING으로 저장
-        val startedAt = LocalDateTime.now()
-        val record = Execution(
-            id = plan.executionId,
-            jobId = jobId,
-            jobVersion = job.version,
-            status = ExecutionStatus.RUNNING,
-            previewMode = previewMode,
-            startedAt = startedAt,
-            triggeredBy = triggeredBy
-        )
-        executionRepository.save(record)
-
-        val engine: ExecutionEngine = when (ir.engineType.name.lowercase()) {
-            "python_worker" -> throw UnsupportedOperationException("Python Worker는 준비 중입니다")
-            else -> sqlPushdownAdapter
-        }
-
-        val validationErrors = engine.validate(plan)
-        if (validationErrors.isNotEmpty()) {
-            val result = ExecutionResult(
-                executionId = plan.executionId,
+        // 동시 실행 방지 (previewMode는 잠금 불필요)
+        if (!previewMode && !executionLockService.tryLock(jobId)) {
+            val msg = "Job $jobId 가 이미 실행 중입니다. 중복 실행을 방지합니다."
+            log.warn("[LOCK] {}", msg)
+            val now = LocalDateTime.now()
+            return ExecutionResult(
+                executionId = UUID.randomUUID(),
                 jobId = jobId,
                 status = ExecutionStatus.FAILED,
-                startedAt = startedAt,
-                finishedAt = LocalDateTime.now(),
+                startedAt = now,
+                finishedAt = now,
                 durationMs = 0,
                 nodeResults = emptyMap(),
-                errorMessage = validationErrors.joinToString("\n"),
-                logs = validationErrors.map { "[VALIDATION] $it" }
+                errorMessage = msg,
+                logs = listOf("[LOCK] $msg")
             )
+        }
+
+        // cancelToken 레지스트리 등록
+        val cancelFlag = AtomicBoolean(false)
+        if (cancelToken != null) cancelRegistry[cancelToken] = cancelFlag
+
+        try {
+            val job = jobService.get(jobId)
+            val ir = objectMapper.readValue(job.irJson, JobIR::class.java)
+            val plan = buildPlan(jobId, ir, context, previewMode, cancelFlag)
+
+            // 실행 시작 — RUNNING으로 저장
+            val startedAt = LocalDateTime.now()
+            val record = Execution(
+                id = plan.executionId,
+                jobId = jobId,
+                jobVersion = job.version,
+                status = ExecutionStatus.RUNNING,
+                previewMode = previewMode,
+                startedAt = startedAt,
+                triggeredBy = triggeredBy
+            )
+            executionRepository.save(record)
+
+            // previewMode는 항상 Pushdown 경로 (결과 확인용)
+            val engine: ExecutionEngine = when {
+                previewMode -> sqlPushdownAdapter
+                ir.engineType.name.lowercase() == "python_worker" ->
+                    throw UnsupportedOperationException("Python Worker는 준비 중입니다")
+                else -> executionRouter   // 자동 라우팅 (Pushdown vs Fetch-and-Process)
+            }
+
+            val validationErrors = if (engine is ExecutionRouter) engine.validate(plan)
+                                   else (engine as SqlPushdownAdapter).validate(plan)
+            if (validationErrors.isNotEmpty()) {
+                val result = ExecutionResult(
+                    executionId = plan.executionId,
+                    jobId = jobId,
+                    status = ExecutionStatus.FAILED,
+                    startedAt = startedAt,
+                    finishedAt = LocalDateTime.now(),
+                    durationMs = 0,
+                    nodeResults = emptyMap(),
+                    errorMessage = validationErrors.joinToString("\n"),
+                    logs = validationErrors.map { "[VALIDATION] $it" }
+                )
+                updateRecord(record, result)
+                return result
+            }
+
+            val result = try {
+                if (engine is ExecutionRouter) engine.execute(plan) else engine.execute(plan)
+            } catch (e: Exception) {
+                val now = LocalDateTime.now()
+                ExecutionResult(
+                    executionId = plan.executionId,
+                    jobId = jobId,
+                    status = ExecutionStatus.FAILED,
+                    startedAt = startedAt,
+                    finishedAt = now,
+                    durationMs = Duration.between(startedAt, now).toMillis(),
+                    nodeResults = emptyMap(),
+                    errorMessage = e.message,
+                    logs = listOf("[ERROR] ${e.message}")
+                )
+            }
+
             updateRecord(record, result)
             return result
+        } finally {
+            if (!previewMode) executionLockService.unlock(jobId)
+            if (cancelToken != null) cancelRegistry.remove(cancelToken)
         }
-
-        val result = try {
-            engine.execute(plan)
-        } catch (e: Exception) {
-            val now = LocalDateTime.now()
-            ExecutionResult(
-                executionId = plan.executionId,
-                jobId = jobId,
-                status = ExecutionStatus.FAILED,
-                startedAt = startedAt,
-                finishedAt = now,
-                durationMs = Duration.between(startedAt, now).toMillis(),
-                nodeResults = emptyMap(),
-                errorMessage = e.message,
-                logs = listOf("[ERROR] ${e.message}")
-            )
-        }
-
-        updateRecord(record, result)
-        return result
     }
 
     fun previewIr(irJson: String, context: Map<String, String> = emptyMap()): ExecutionResult {
@@ -157,7 +204,8 @@ class ExecutionService(
 
     private fun buildPlan(
         jobId: UUID, ir: JobIR,
-        context: Map<String, String>, previewMode: Boolean
+        context: Map<String, String>, previewMode: Boolean,
+        cancelFlag: AtomicBoolean = AtomicBoolean(false)
     ): ExecutionPlan {
         val sortedIds = topologicalSort(ir)
         // 머징 순서: ir.context.defaultValue → ir.context.value → runtimeContext (뒤가 우선)
@@ -176,7 +224,8 @@ class ExecutionService(
             ir = ir,
             sortedNodeIds = sortedIds,
             context = mergedContext,
-            previewMode = previewMode
+            previewMode = previewMode,
+            cancelFlag = cancelFlag
         )
     }
 

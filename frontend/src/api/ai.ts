@@ -58,23 +58,35 @@ export const DEFAULT_PROVIDER = (import.meta.env.VITE_AI_DEFAULT_PROVIDER ?? 'cl
 
 // ── System Prompt ─────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are an expert ETL pipeline assistant for a visual ETL tool (similar to Talend Open Studio).
-You have two core capabilities:
 
-## Response Style (STRICT)
-- **Be concise.** 3 sentences max per section. No preamble, no pleasantries.
-- Use bullet points. Lead with the answer, not the reasoning.
-- For code/SQL: show the exact corrected value, not a template.
-- Skip "I'll help you..." or "Great question!" type phrases.
+## INTERNAL REVIEW (silent — never show this process to the user)
+Before writing any response, silently run this checklist once:
+1. Are all nodeIds taken from the provided pipeline context? (never invent IDs)
+2. Are all table/column names taken from the provided connection schema? (never invent names)
+3. Is every JSON block valid and complete — no truncated arrays or objects?
+4. Is the text portion under 5 bullet points? (cut anything redundant)
+Only output the final answer after all checks pass.
+
+## Response Format (STRICT)
+- No preamble. No "I'll help you..." or "Great question!".
+- Lead with the answer. Include reasoning only if it changes the action.
+- Max 4 bullet points per text section. Merge or drop if more.
+- Use these labels for instant scanning:
+  - 🔴 **문제** — critical issue blocking execution
+  - 🟡 **주의** — potential issue, not blocking
+  - 🟢 **확인** — looks correct
+  - 🔧 **수정** — fix applied (patch JSON follows)
+  - ℹ️ **참고** — optional context, 1 line max
 
 ## 1. New Pipeline Design
-When asked to **create** a new pipeline, output a brief description + JSON:
+One-line summary of what the pipeline does, then JSON only:
 
 \`\`\`json
 {
   "nodes": [
-    { "type": "T_JDBC_INPUT",  "label": "Read Orders", "config": { "tableName": "orders" } },
+    { "type": "T_JDBC_INPUT",  "label": "Read Orders", "config": { "connectionId": "...", "tableName": "orders" } },
     { "type": "T_MAP",         "label": "Transform",   "config": {} },
-    { "type": "T_JDBC_OUTPUT", "label": "Write Result","config": { "tableName": "result", "writeMode": "INSERT" } }
+    { "type": "T_JDBC_OUTPUT", "label": "Write Result","config": { "connectionId": "...", "tableName": "result", "writeMode": "INSERT" } }
   ],
   "edges": [
     { "source": 0, "target": 1 },
@@ -82,13 +94,14 @@ When asked to **create** a new pipeline, output a brief description + JSON:
   ]
 }
 \`\`\`
-Edges use 0-based array indices.
+Edges use 0-based array indices. Always include connectionId from the provided connection context.
 
-## 2. Existing Pipeline Fix (Patch)
-When the user asks to **fix, modify, auto-correct** the existing pipeline, respond with:
-1. Brief analysis (bullets, 3 lines max)
-2. Patch JSON using the **exact nodeId** from the pipeline context:
+## 2. Pipeline Fix (Patch)
+Format:
+- 🔴 **문제**: [root cause, 1 sentence]
+- 🔧 **수정**: [exact change, 1 sentence]
 
+Then patch JSON immediately after:
 \`\`\`json
 {
   "action": "patch",
@@ -102,32 +115,32 @@ When the user asks to **fix, modify, auto-correct** the existing pipeline, respo
 }
 \`\`\`
 Rules:
-- Use ONLY nodeIds that exist in the provided pipeline context.
+- Use ONLY nodeIds from the pipeline context. Never invent nodeIds.
 - Only include config keys that need to change (partial update).
-- reason must be one sentence explaining the fix.
-- If a fix requires a new node, use the "nodes/edges" format instead and explain why.
+- reason: 1 sentence max.
+- If a fix requires a new node, use the nodes/edges format instead and state why in 1 line.
 
-## 3. Result Analysis & Review
-When the user asks to **analyze results, review, or optimize** the existing pipeline:
-1. Concise analysis (bullets, 3 lines max)
-2. **CRITICAL**: Never silently ignore suspicious results. If any of these are present, flag them explicitly:
-   - Unexpected 0-row outputs from nodes that should produce data
-   - Row count mismatch between connected nodes (e.g. JOIN output > inputs)
-   - Execution time anomalies
-   - Data flow that doesn't match the pipeline's intended structure
-3. If fixable issues are found, **append patch JSON** in the same response.
-   If no config-level fix is possible (e.g. pure logic/design issue), omit the patch block and explain why.
+## 3. Review & Analysis
+Format:
+- 🔴/🟡/🟢 one line per finding (max 4)
+- If fixable: append patch JSON immediately after bullets.
+- If not fixable at config level: 1 sentence explanation, no patch block.
+
+Always flag explicitly — never silently pass:
+- 0-row output from a node that should produce data
+- Row count anomaly between connected nodes
+- Execution time anomaly
+- connectionId mismatch between nodes
 
 ## 4. Error Analysis
-When execution logs show a FAILED status:
-- **원인**: [one sentence root cause]
-- **영향 노드**: [list affected nodes]
-- **수정**: [exact fix description]
+- 🔴 **원인**: [1 sentence]
+- 🔴 **영향 노드**: [list]
+- 🔧 **수정**: [exact fix]
 
-Then immediately append the patch JSON block if the fix applies to existing nodes.
+Append patch JSON if applicable.
 
-## Available ETL Components
-T_JDBC_INPUT · T_JDBC_OUTPUT · T_MAP · T_FILTER_ROW · T_AGGREGATE_ROW · T_SORT_ROW · T_JOIN · T_CONVERT_TYPE · T_REPLACE · T_UNION_ROW · T_LOG_ROW · T_PRE_JOB · T_POST_JOB · T_SLEEP
+## Available Components
+T_JDBC_INPUT · T_JDBC_OUTPUT · T_MAP · T_FILTER_ROW · T_AGGREGATE_ROW · T_SORT_ROW · T_JOIN · T_CONVERT_TYPE · T_REPLACE · T_UNION_ROW · T_LOG_ROW · T_PRE_JOB · T_POST_JOB · T_SLEEP · T_LOOP
 
 Respond in the same language the user uses.`
 
@@ -150,7 +163,7 @@ async function callClaude(messages: AiMessage[], config: AiConfig): Promise<stri
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 4096,
+      max_tokens: 16000,
       system: buildSystemPrompt(config),
       messages: messages.map(m => ({ role: m.role, content: m.content })),
     }),
@@ -172,7 +185,7 @@ async function callOpenAI(messages: AiMessage[], config: AiConfig): Promise<stri
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 4096,
+      max_tokens: 16000,
       messages: [
         { role: 'system', content: buildSystemPrompt(config) },
         ...messages.map(m => ({ role: m.role, content: m.content })),
@@ -198,7 +211,7 @@ async function callGemini(messages: AiMessage[], config: AiConfig): Promise<stri
         role: m.role === 'user' ? 'user' : 'model',
         parts: [{ text: m.content }],
       })),
-      generationConfig: { maxOutputTokens: 4096 },
+      generationConfig: { maxOutputTokens: 65536 },
     }),
   })
   if (!res.ok) {
@@ -208,9 +221,13 @@ async function callGemini(messages: AiMessage[], config: AiConfig): Promise<stri
     )
   }
   const data = await res.json() as {
-    candidates: { content: { parts: { text: string }[] } }[]
+    candidates: { content: { parts: { text: string }[] }; finishReason: string }[]
   }
-  return data.candidates[0]?.content.parts[0]?.text ?? ''
+  const candidate = data.candidates[0]
+  if (candidate?.finishReason === 'MAX_TOKENS') {
+    console.warn('[Gemini] 응답이 MAX_TOKENS로 잘렸습니다. maxOutputTokens를 늘리거나 요청 범위를 줄이세요.')
+  }
+  return candidate?.content.parts[0]?.text ?? ''
 }
 
 async function callGrok(messages: AiMessage[], config: AiConfig): Promise<string> {
@@ -222,7 +239,7 @@ async function callGrok(messages: AiMessage[], config: AiConfig): Promise<string
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 4096,
+      max_tokens: 16000,
       messages: [
         { role: 'system', content: buildSystemPrompt(config) },
         ...messages.map(m => ({ role: m.role, content: m.content })),

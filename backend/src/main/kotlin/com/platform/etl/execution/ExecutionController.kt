@@ -7,7 +7,8 @@ import java.util.UUID
 data class RunRequest(
     val context: Map<String, String> = emptyMap(),
     val previewMode: Boolean = false,
-    val triggeredBy: String = "manual"
+    val triggeredBy: String = "manual",
+    val cancelToken: String? = null
 )
 
 data class PreviewIrRequest(
@@ -21,7 +22,14 @@ class ExecutionController(private val service: ExecutionService) {
 
     @PostMapping("/jobs/{jobId}/run")
     fun run(@PathVariable jobId: UUID, @RequestBody req: RunRequest) =
-        service.execute(jobId, req.context, req.previewMode, req.triggeredBy)
+        service.execute(jobId, req.context, req.previewMode, req.triggeredBy, req.cancelToken)
+
+    @PostMapping("/executions/cancel/{token}")
+    fun cancel(@PathVariable token: String): ResponseEntity<Map<String, Any>> {
+        val cancelled = service.cancel(token)
+        return if (cancelled) ResponseEntity.ok(mapOf("cancelled" to true))
+        else ResponseEntity.notFound().build()
+    }
 
     @PostMapping("/execution/preview")
     fun previewIr(@RequestBody req: PreviewIrRequest) =

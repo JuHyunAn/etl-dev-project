@@ -58,11 +58,15 @@ export const jobsApi = {
 
 // ── Execution ─────────────────────────────────────────────────
 export const executionApi = {
-  run: (jobId: string, context?: Record<string, string>, previewMode?: boolean) =>
+  run: (jobId: string, context?: Record<string, string>, previewMode?: boolean, cancelToken?: string) =>
     client.post<ExecutionResult>(`/api/jobs/${jobId}/run`, {
       context: context ?? {},
       previewMode: previewMode ?? false,
-    }).then(r => r.data),
+      cancelToken,
+    }, { timeout: 300000 }).then(r => r.data),
+
+  cancel: (cancelToken: string) =>
+    client.post(`/api/executions/cancel/${cancelToken}`).then(r => r.data),
 
   listAll: (page = 0, size = 20) =>
     client.get<{ content: ExecutionSummary[]; totalElements: number; totalPages: number }>(

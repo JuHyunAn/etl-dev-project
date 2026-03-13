@@ -137,6 +137,7 @@ export interface NodeResult {
   generatedSql?: string
   errorMessage?: string
   rowSamples?: LogRowData
+  tableRowSamples?: Record<string, LogRowData>
 }
 
 export interface ExecutionResult {

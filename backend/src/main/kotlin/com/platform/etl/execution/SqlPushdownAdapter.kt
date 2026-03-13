@@ -136,6 +136,11 @@ class SqlPushdownAdapter(
             if (hasTriggerEdges) logs += "[TRIGGER] Trigger 모드 활성화"
 
             for (nodeId in resolvedPlan.sortedNodeIds) {
+                if (resolvedPlan.cancelFlag.get()) {
+                    logs += "[CANCEL] 취소 요청으로 실행 중단"
+                    throw InterruptedException("실행이 취소되었습니다")
+                }
+
                 // 루프 바디 노드는 T_LOOP 실행 시 처리됨
                 if (nodeId in loopBodyNodes) continue
 
@@ -681,6 +686,8 @@ class SqlPushdownAdapter(
 
                         jdbc.commit()
                         logs += "[SQL] ${rows}행 적재 완료"
+                        // 커밋 성공 후 watermark 갱신 (R1 원자성 보장: write 먼저, watermark 나중)
+                        runCatching { compiler.saveWatermarks(plan) }
 
                         NodeResult(
                             node.id, node.type.name, ExecutionStatus.SUCCESS,
@@ -709,28 +716,74 @@ class SqlPushdownAdapter(
         logs: MutableList<String>, startMs: Long
     ): NodeResult {
         return try {
-            val query = compiler.compileForLogRow(plan, node)
-            val conn     = connectionService.get(query.connectionId)
-            val jdbcUrl  = connectionService.buildJdbcUrl(conn)
-            val password = connectionService.getDecryptedPassword(conn.id)
+            // 이 T_LOG_ROW 노드에서 나가는 ROW 엣지의 downstream OUTPUT 노드 목록
+            val downstreamOutputs = plan.ir.edges
+                .filter { it.source == node.id && it.linkType == com.platform.etl.ir.LinkType.ROW }
+                .mapNotNull { edge -> plan.ir.nodes.find { it.id == edge.target } }
+                .filter { it.type == com.platform.etl.ir.ComponentType.T_JDBC_OUTPUT }
 
-            DriverManager.getConnection(jdbcUrl, conn.username, password).use { jdbc ->
-                jdbc.createStatement().use { stmt ->
-                    stmt.executeQuery(query.sql).use { rs ->
-                        val meta = rs.metaData
-                        val columns = (1..meta.columnCount).map { meta.getColumnName(it) }
-                        val rows = mutableListOf<List<Any?>>()
-                        while (rs.next()) {
-                            rows += (1..meta.columnCount).map { rs.getObject(it) }
+            if (downstreamOutputs.size > 1) {
+                // 다중 OUTPUT — 각 테이블별로 downstream 변환 포함 경로를 컴파일하여 캡처
+                val tableRowSamples = mutableMapOf<String, LogRowData>()
+                var totalCount = 0L
+
+                for (outputNode in downstreamOutputs) {
+                    val baseName = outputNode.config["tableName"]?.toString() ?: outputNode.label
+                    val query = compiler.compileForLogRowDownstream(plan, node, outputNode)
+                    val conn     = connectionService.get(query.connectionId)
+                    // 탭 key: 테이블명 기준, 중복 시 label로 구분
+                    val tableName = if (tableRowSamples.containsKey(baseName)) "${outputNode.label}:$baseName" else baseName
+                    val jdbcUrl  = connectionService.buildJdbcUrl(conn)
+                    val password = connectionService.getDecryptedPassword(conn.id)
+
+                    DriverManager.getConnection(jdbcUrl, conn.username, password).use { jdbc ->
+                        jdbc.createStatement().use { stmt ->
+                            stmt.executeQuery(query.sql).use { rs ->
+                                val meta = rs.metaData
+                                val columns = (1..meta.columnCount).map { meta.getColumnName(it) }
+                                val rows = mutableListOf<List<Any?>>()
+                                while (rs.next()) {
+                                    rows += (1..meta.columnCount).map { rs.getObject(it) }
+                                }
+                                tableRowSamples[tableName] = LogRowData(columns, rows)
+                                totalCount = maxOf(totalCount, rows.size.toLong())
+                                logs += "[LOG] '${node.label}' → '$tableName': ${rows.size}행 캡처"
+                            }
                         }
-                        val count = rows.size.toLong()
-                        logs += "[LOG] '${node.label}': ${count}행 캡처 (최대 100행 샘플)"
-                        NodeResult(
-                            node.id, node.type.name, ExecutionStatus.SUCCESS,
-                            rowsProcessed = count,
-                            durationMs = System.currentTimeMillis() - startMs,
-                            rowSamples = LogRowData(columns, rows)
-                        )
+                    }
+                }
+
+                NodeResult(
+                    node.id, node.type.name, ExecutionStatus.SUCCESS,
+                    rowsProcessed = totalCount,
+                    durationMs = System.currentTimeMillis() - startMs,
+                    tableRowSamples = tableRowSamples
+                )
+            } else {
+                // 단일 OUTPUT (또는 OUTPUT 없음) — 기존 방식: T_LOG_ROW upstream 데이터 캡처
+                val query = compiler.compileForLogRow(plan, node)
+                val conn     = connectionService.get(query.connectionId)
+                val jdbcUrl  = connectionService.buildJdbcUrl(conn)
+                val password = connectionService.getDecryptedPassword(conn.id)
+
+                DriverManager.getConnection(jdbcUrl, conn.username, password).use { jdbc ->
+                    jdbc.createStatement().use { stmt ->
+                        stmt.executeQuery(query.sql).use { rs ->
+                            val meta = rs.metaData
+                            val columns = (1..meta.columnCount).map { meta.getColumnName(it) }
+                            val rows = mutableListOf<List<Any?>>()
+                            while (rs.next()) {
+                                rows += (1..meta.columnCount).map { rs.getObject(it) }
+                            }
+                            val count = rows.size.toLong()
+                            logs += "[LOG] '${node.label}': ${count}행 캡처 (최대 100행 샘플)"
+                            NodeResult(
+                                node.id, node.type.name, ExecutionStatus.SUCCESS,
+                                rowsProcessed = count,
+                                durationMs = System.currentTimeMillis() - startMs,
+                                rowSamples = LogRowData(columns, rows)
+                            )
+                        }
                     }
                 }
             }

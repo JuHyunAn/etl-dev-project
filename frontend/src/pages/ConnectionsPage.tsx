@@ -20,6 +20,27 @@ const DB_DEFAULTS: Record<DbType, number> = {
   MARIADB: 3306,
 };
 
+// DB 타입별 필드 설정
+const DB_LABEL: Record<DbType, {
+  database: string; databasePlaceholder: string; databaseRequired: boolean; databaseHint?: string;
+  showSchema: boolean; schemaLabel: string; schemaPlaceholder: string;
+}> = {
+  POSTGRESQL: {
+    database: "Database *", databasePlaceholder: "my_database", databaseRequired: true,
+    showSchema: true, schemaLabel: "Schema", schemaPlaceholder: "public (비워두면 기본값)",
+  },
+  ORACLE: {
+    database: "SID / Service Name *", databasePlaceholder: "ORCL", databaseRequired: true,
+    showSchema: true, schemaLabel: "Schema (User)", schemaPlaceholder: "username과 동일하면 생략 가능",
+  },
+  MARIADB: {
+    database: "Database", databasePlaceholder: "my_database (비워두면 전체 접근)",
+    databaseRequired: false,
+    databaseHint: "비워두면 서버 전체 접근 — 테이블명을 db.table 형식으로 입력",
+    showSchema: false, schemaLabel: "", schemaPlaceholder: "",
+  },
+};
+
 function ConnectionForm({
   initial,
   onSave,
@@ -49,9 +70,15 @@ function ConnectionForm({
     setForm((f) => ({ ...f, [key]: value }));
   };
 
+  const dbMeta = DB_LABEL[form.dbType];
+
   const handleSubmit = async () => {
-    if (!form.name || !form.host || !form.database || !form.username) {
-      setError("Name, Host, Database, Username are required");
+    if (!form.name || !form.host || !form.username) {
+      setError("Name, Host, Username are required");
+      return;
+    }
+    if (DB_LABEL[form.dbType].databaseRequired && !form.database) {
+      setError("Database is required");
       return;
     }
     if (!initial && !form.password) {
@@ -112,6 +139,8 @@ function ConnectionForm({
             const t = e.target.value as DbType;
             set("dbType", t);
             set("port", DB_DEFAULTS[t]);
+            // MariaDB로 변경 시 schema 초기화 (불필요한 값 잔존 방지)
+            if (t === "MARIADB") set("schema", "");
           }}
         >
           <option value="POSTGRESQL">PostgreSQL</option>
@@ -130,18 +159,32 @@ function ConnectionForm({
           onChange={(e) => set("host", e.target.value)}
           placeholder="localhost"
         />
-        <Input
-          label="Database *"
-          value={form.database}
-          onChange={(e) => set("database", e.target.value)}
-          placeholder="my_database"
-        />
-        <Input
-          label="Schema"
-          value={form.schema ?? ""}
-          onChange={(e) => set("schema", e.target.value)}
-          placeholder="public"
-        />
+        <div>
+          <Input
+            label={dbMeta.database}
+            value={form.database}
+            onChange={(e) => set("database", e.target.value)}
+            placeholder={dbMeta.databasePlaceholder}
+          />
+          {dbMeta.databaseHint && (
+            <p className="mt-1 text-xs" style={{ color: "#94a3b8" }}>{dbMeta.databaseHint}</p>
+          )}
+        </div>
+        {dbMeta.showSchema ? (
+          <Input
+            label={dbMeta.schemaLabel}
+            value={form.schema ?? ""}
+            onChange={(e) => set("schema", e.target.value)}
+            placeholder={dbMeta.schemaPlaceholder}
+          />
+        ) : (
+          // MariaDB: Schema 필드 대신 DB = Schema 안내 문구
+          <div className="flex flex-col justify-end pb-1">
+            <p className="text-xs" style={{ color: "#64748b" }}>
+              MariaDB / MySQL은 Database가 Schema를 겸합니다.
+            </p>
+          </div>
+        )}
         <Input
           label="Username *"
           value={form.username}
@@ -385,8 +428,8 @@ export default function ConnectionsPage() {
                             className="text-xs mt-0.5"
                             style={{ color: "#64748b" }}
                           >
-                            {conn.username}@{conn.host}:{conn.port}/
-                            {conn.database}
+                            {conn.username}@{conn.host}:{conn.port}
+                            {conn.database ? `/${conn.database}` : " (전체 DB)"}
                             {conn.schema ? `/${conn.schema}` : ""}
                           </p>
                           {conn.description && (

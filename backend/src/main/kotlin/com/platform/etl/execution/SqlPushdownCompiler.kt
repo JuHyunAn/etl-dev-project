@@ -19,7 +19,8 @@ import java.util.UUID
  */
 @Component
 class SqlPushdownCompiler(
-    private val connectionService: ConnectionService
+    private val connectionService: ConnectionService,
+    private val watermarkService: WatermarkService
 ) {
 
     data class CompiledPipeline(
@@ -41,6 +42,13 @@ class SqlPushdownCompiler(
      * Multi-output 환경에서 각 Output마다 독립적인 SQL을 생성할 수 있습니다.
      */
     fun compile(plan: ExecutionPlan, targetOutputNode: NodeIR): CompiledPipeline {
+        // Watermark 값을 읽어 Input 노드 config에 _watermarkWhere 주입
+        val irWithWatermark = injectWatermarkConditions(plan)
+        val planToCompile = plan.copy(ir = irWithWatermark)
+        return compileInternal(planToCompile, targetOutputNode)
+    }
+
+    private fun compileInternal(plan: ExecutionPlan, targetOutputNode: NodeIR): CompiledPipeline {
         val ir = plan.ir
         val incomingEdges = ir.edges.groupBy { it.target }
 
@@ -111,6 +119,64 @@ class SqlPushdownCompiler(
         return compile(plan, outputNode)
     }
 
+    /**
+     * 실행 성공 후 watermark 갱신.
+     * 반드시 타겟 write 완전 성공 확인 후 호출할 것.
+     */
+    fun saveWatermarks(plan: ExecutionPlan) {
+        plan.ir.nodes
+            .filter { it.type == ComponentType.T_JDBC_INPUT }
+            .forEach { node ->
+                @Suppress("UNCHECKED_CAST")
+                val incremental = node.config["incremental"] as? Map<String, Any?> ?: return@forEach
+                if (incremental["enabled"] != true) return@forEach
+
+                val watermarkVar = incremental["watermarkVar"]?.toString() ?: return@forEach
+                // _nextWatermark 는 실행 전 주입된 다음 watermark 값 (실행 시작 시각 UTC)
+                val nextVal = node.config["_nextWatermark"]?.toString() ?: return@forEach
+
+                watermarkService.save(plan.jobId, node.id, watermarkVar, nextVal)
+            }
+    }
+
+    /**
+     * IR의 T_JDBC_INPUT 노드에 watermark WHERE 조건을 주입.
+     * - incremental.mode = TIMESTAMP: WHERE {column} >= '{watermark}' (패턴 A: >= + UPSERT)
+     * - incremental.mode = OFFSET:    WHERE {column} > {watermark}
+     * - watermark 없으면 (첫 실행) WHERE 조건 없음 → FULL SCAN
+     * 또한 _nextWatermark = 현재 UTC 시각 (성공 후 저장용)
+     */
+    private fun injectWatermarkConditions(plan: ExecutionPlan): JobIR {
+        val now = java.time.Instant.now().toString()  // UTC ISO-8601
+        val updatedNodes = plan.ir.nodes.map { node ->
+            if (node.type != ComponentType.T_JDBC_INPUT) return@map node
+
+            @Suppress("UNCHECKED_CAST")
+            val incremental = node.config["incremental"] as? Map<String, Any?> ?: return@map node
+            if (incremental["enabled"] != true) return@map node
+
+            val mode = incremental["mode"]?.toString() ?: "FULL"
+            val column = incremental["column"]?.toString() ?: return@map node
+            val watermarkVar = incremental["watermarkVar"]?.toString() ?: return@map node
+
+            val lastValue = watermarkService.load(plan.jobId, node.id, watermarkVar)
+
+            val whereClause = when {
+                lastValue == null -> null  // 첫 실행: FULL SCAN
+                mode == "TIMESTAMP" -> "$column >= '$lastValue'"   // 패턴 A: >=
+                mode == "OFFSET"    -> "$column > $lastValue"      // OFFSET: >
+                else -> null
+            }
+
+            val extraConfig = mutableMapOf<String, Any?>()
+            if (whereClause != null) extraConfig["_watermarkWhere"] = whereClause
+            extraConfig["_nextWatermark"] = now
+
+            node.copy(config = node.config + extraConfig)
+        }
+        return plan.ir.copy(nodes = updatedNodes)
+    }
+
     data class LogRowQuery(val sql: String, val connectionId: UUID)
 
     /**
@@ -157,6 +223,58 @@ class SqlPushdownCompiler(
         )
     }
 
+    /**
+     * T_LOG_ROW → 특정 T_JDBC_OUTPUT 사이의 변환 노드까지 포함하여 컴파일합니다.
+     * T_LOG_ROW 이후 T_MAP 등 downstream 변환이 있을 때, 실제로 OUTPUT에 쓰일 데이터를 캡처합니다.
+     */
+    fun compileForLogRowDownstream(
+        plan: ExecutionPlan,
+        logNode: NodeIR,
+        outputNode: NodeIR,
+        maxRows: Int = 100
+    ): LogRowQuery {
+        val ir = plan.ir
+        val incomingEdges = ir.edges.groupBy { it.target }
+
+        // T_LOG_ROW의 upstream + T_LOG_ROW 자신 + OUTPUT까지 사이의 노드들
+        val upstreamIds = collectUpstreamIds(logNode.id, ir)
+        val betweenIds = collectUpstreamIds(outputNode.id, ir) - upstreamIds - outputNode.id + logNode.id
+        val allIds = upstreamIds + betweenIds
+
+        val inputNode = ir.nodes.find { it.id in upstreamIds && it.type == ComponentType.T_JDBC_INPUT }
+            ?: throw IllegalStateException("tLog '${logNode.label}': upstream INPUT 노드를 찾을 수 없습니다")
+        val connId = inputNode.config["connectionId"]?.toString()
+            ?: throw IllegalStateException("tLog '${logNode.label}': upstream connectionId 미설정")
+
+        val ctes = mutableListOf<Pair<String, String>>()
+        for (nodeId in plan.sortedNodeIds) {
+            val node = ir.nodes.find { it.id == nodeId } ?: continue
+            if (node.type == ComponentType.T_JDBC_OUTPUT) continue
+            if (nodeId !in allIds) continue
+
+            val predecessorIds = (incomingEdges[nodeId] ?: emptyList())
+                .filter { it.linkType == LinkType.ROW }
+                .map { it.source }
+            val prevCte = predecessorIds.firstOrNull()?.let { cteNameOf(it) }
+
+            val body = buildCteSql(node, prevCte, predecessorIds) ?: continue
+            ctes.add(cteNameOf(nodeId) to body)
+        }
+
+        require(ctes.isNotEmpty()) { "tLog '${logNode.label}' → '${outputNode.label}' 경로에 컴파일 가능한 노드가 없습니다" }
+
+        val finalCte = ctes.last().first
+        val withClause = "WITH\n" + ctes.joinToString(",\n\n") { (name, body) ->
+            val indented = body.trimIndent().replace("\n", "\n  ")
+            "$name AS (\n  $indented\n)"
+        }
+
+        return LogRowQuery(
+            sql = "$withClause\nSELECT * FROM $finalCte LIMIT $maxRows",
+            connectionId = UUID.fromString(connId)
+        )
+    }
+
     // ── CTE 이름 생성 (nodeId의 특수문자 → 언더스코어) ──────────
     fun cteNameOf(nodeId: String): String =
         "cte_${nodeId.replace(Regex("[^a-zA-Z0-9]"), "_")}"
@@ -181,9 +299,11 @@ class SqlPushdownCompiler(
                 !table.isNullOrBlank() -> {
                     val colStr = if (cols.isNotEmpty()) cols.joinToString(", ") else "*"
                     // 테이블명에 schema prefix가 없으면 Input 커넥션의 schema를 자동으로 붙임.
-                    // 이를 통해 Output 커넥션(다른 schema)에서 실행되어도 소스 테이블을 찾을 수 있음.
                     val qualifiedTable = qualifyTableName(table, node.config["connectionId"]?.toString())
-                    "SELECT $colStr FROM $qualifiedTable"
+                    val baseSql = "SELECT $colStr FROM $qualifiedTable"
+                    // Watermark 증분 WHERE 조건 추가 (_watermarkWhere 는 compile() 단계에서 주입)
+                    val watermarkWhere = node.config["_watermarkWhere"]?.toString()
+                    if (!watermarkWhere.isNullOrBlank()) "$baseSql WHERE $watermarkWhere" else baseSql
                 }
                 else -> null
             }
@@ -362,22 +482,31 @@ class SqlPushdownCompiler(
         else name
 
     /**
-     * 테이블명에 schema prefix가 없으면 Input 커넥션의 schema를 자동으로 붙입니다.
-     * - "emp"            → "source_schema.emp"
-     * - "source.emp"     → "source.emp" (이미 있으면 그대로)
-     * - connectionId 없음 → 그대로
+     * 테이블명에 prefix가 없으면 커넥션 정보를 기반으로 자동으로 붙입니다.
+     * - "emp"         → "source_schema.emp"  (PostgreSQL: schema prefix)
+     * - "emp"         → "mydb.emp"           (MariaDB: database prefix — 이기종 크로스DB 참조 대비)
+     * - "emp"         → "emp"                (PostgreSQL schema=null 이면 그대로)
+     * - "source.emp"  → "source.emp"         (이미 prefix 있으면 그대로)
      */
     private fun qualifyTableName(tableName: String, connectionId: String?): String {
-        // 이미 schema.table 형태이면 그대로 반환
         if (tableName.contains('.')) return tableName
         if (connectionId.isNullOrBlank()) return tableName
 
         return try {
             val conn = connectionService.get(UUID.fromString(connectionId))
-            val schema = conn.schema
-            if (!schema.isNullOrBlank()) "$schema.$tableName" else tableName
+            val prefix = when (conn.dbType) {
+                com.platform.etl.domain.connection.DbType.MARIADB ->
+                    // database 공란(전체 접근)이면 prefix 없음 — 테이블명을 db.table 형식으로 직접 입력해야 함
+                    // database 지정 커넥션이면 database명을 prefix로 사용
+                    conn.database.ifBlank { null }
+                com.platform.etl.domain.connection.DbType.ORACLE ->
+                    conn.schema ?: conn.username
+                com.platform.etl.domain.connection.DbType.POSTGRESQL ->
+                    conn.schema  // null이면 prefix 없음 (현재 search_path 기본값 사용)
+            }
+            if (!prefix.isNullOrBlank()) "$prefix.$tableName" else tableName
         } catch (e: Exception) {
-            tableName  // 커넥션 조회 실패 시 원본 유지
+            tableName
         }
     }
 }

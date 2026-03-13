@@ -252,6 +252,67 @@ function JdbcInputConfig({ config, onChange }: {
           </div>
         </div>
       )}
+
+      {/* 증분 처리 설정 */}
+      <div className="space-y-2 pt-1 border-t border-[#e2e8f0]">
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-medium text-[#64748b]">증분 처리</label>
+          <input
+            type="checkbox"
+            checked={(config.incremental as Record<string, unknown>)?.enabled === true}
+            onChange={e => onChange('incremental', {
+              ...((config.incremental as Record<string, unknown>) ?? {}),
+              enabled: e.target.checked
+            })}
+            className="w-3.5 h-3.5 accent-[#7c3aed]"
+          />
+        </div>
+
+        {(config.incremental as Record<string, unknown>)?.enabled === true && (
+          <div className="space-y-2 pl-2 border-l-2 border-[#7c3aed]/30">
+            <div className="space-y-1">
+              <label className="text-[11px] text-[#94a3b8]">모드</label>
+              <select
+                value={((config.incremental as Record<string, unknown>)?.mode as string) ?? 'TIMESTAMP'}
+                onChange={e => onChange('incremental', {
+                  ...((config.incremental as Record<string, unknown>) ?? {}),
+                  mode: e.target.value
+                })}
+                className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1 text-xs">
+                <option value="TIMESTAMP">TIMESTAMP (updated_at 기준)</option>
+                <option value="OFFSET">OFFSET (PK 단조증가 기준)</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] text-[#94a3b8]">기준 컬럼</label>
+              <input
+                value={((config.incremental as Record<string, unknown>)?.column as string) ?? ''}
+                onChange={e => onChange('incremental', {
+                  ...((config.incremental as Record<string, unknown>) ?? {}),
+                  column: e.target.value
+                })}
+                placeholder="updated_at"
+                className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1 text-xs font-mono placeholder-[#94a3b8] focus:outline-none focus:border-[#7c3aed]"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] text-[#94a3b8]">Watermark 변수명</label>
+              <input
+                value={((config.incremental as Record<string, unknown>)?.watermarkVar as string) ?? ''}
+                onChange={e => onChange('incremental', {
+                  ...((config.incremental as Record<string, unknown>) ?? {}),
+                  watermarkVar: e.target.value
+                })}
+                placeholder="last_run"
+                className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1 text-xs font-mono placeholder-[#94a3b8] focus:outline-none focus:border-[#7c3aed]"
+              />
+            </div>
+            <p className="text-[10px] text-[#94a3b8]">
+              첫 실행: FULL SCAN → 이후 실행: WHERE {(config.incremental as Record<string, unknown>)?.column as string || 'column'} &gt;= 마지막 watermark
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -309,6 +370,20 @@ function JdbcOutputConfig({ config, onChange }: {
         <option value="DELETE">DELETE</option>
         <option value="TRUNCATE_INSERT">TRUNCATE + INSERT</option>
       </Select>
+
+      {/* UPSERT 시 PK 컬럼 설정 (이기종 Fetch-and-Process 경로에서 사용) */}
+      {(config.writeMode as string) === 'UPSERT' && (
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-[#64748b]">PK 컬럼 <span className="text-[10px] text-[#94a3b8]">(쉼표 구분)</span></label>
+          <input
+            value={(config.pkColumns as string) ?? ''}
+            onChange={e => onChange('pkColumns', e.target.value)}
+            placeholder="id, code"
+            className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded-md px-3 py-2
+              text-xs font-mono placeholder-[#94a3b8] focus:outline-none focus:border-[#2563eb]"
+          />
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <input type="checkbox" id="truncate"

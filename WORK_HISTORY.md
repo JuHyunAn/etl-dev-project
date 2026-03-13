@@ -1,6 +1,6 @@
 # ETL Platform - Work History & Reference
 
-> 최종 업데이트: 2026-03-10
+> 최종 업데이트: 2026-03-13
 
 ---
 
@@ -959,3 +959,52 @@ Job은 `ir_json` (JSONB)으로 저장됨.
 
 **API 추가**
 - `schedulesApi.listByJob(jobId)` — `GET /api/schedules/by-job/{jobId}`
+
+---
+
+## [2026-03-13] 이기종 DB 지원 PHASE 1~2 구현
+
+### 신규 파일
+- **`V11__add_execution_locks.sql`**: Job 동시 실행 방지 잠금 테이블
+- **`V12__add_watermarks.sql`**: Watermark 증분 처리 기준값 저장 테이블
+- **`ExecutionLockService.kt`**: Job 동시 실행 방지 (INSERT 성공=락 획득, try-finally unlock)
+- **`ExecutionRouter.kt`**: IR 분석 → Pushdown/Fetch-and-Process 자동 라우팅
+  - 모든 Input+Output이 동일 host:port → SqlPushdownAdapter (기존 방식)
+  - 다른 서버 → FetchAndProcessExecutor (신규)
+- **`FetchAndProcessExecutor.kt`**: 이기종 DB 실행 엔진
+  - 소스 DB에서 청크 스트리밍 fetch (ResultSet.fetchSize=10,000)
+  - tMap 인메모리 변환 (TRIM/UPPER/COALESCE/리터럴 Expression 지원)
+  - tFilter 단순 조건 인메모리 평가 (IS NULL, =, IS NOT NULL)
+  - Broadcast Join (T_JOIN + LOOKUP 엣지 → HashMap 룩업, 100만 행 상한)
+  - 타겟 DB 배치 기록 + autoCommit=false 커밋
+- **`TargetWriter.kt`**: UPSERT 방언 분기
+  - PostgreSQL: `ON CONFLICT (...) DO UPDATE SET col = EXCLUDED.col`
+  - MariaDB: `ON DUPLICATE KEY UPDATE col = ?`
+  - Oracle: `MERGE INTO ... USING (SELECT ? AS col FROM DUAL) ...`
+- **`WatermarkService.kt`**: watermark 조회/저장 (etl_watermarks 테이블, UTC ISO-8601)
+
+### 수정 파일
+- **`ExecutionService.kt`**: ExecutionRouter + ExecutionLockService 연결, previewMode는 잠금 제외
+- **`SqlPushdownCompiler.kt`**: WatermarkService 주입, T_JDBC_INPUT CTE에 watermark WHERE 조건 자동 삽입
+  - `injectWatermarkConditions()`: 실행 전 watermark 값 읽어 `_watermarkWhere` config에 주입
+  - `saveWatermarks()`: 커밋 성공 후 호출 (R1 원자성 보장)
+- **`SqlPushdownAdapter.kt`**: 커밋 성공 후 `compiler.saveWatermarks()` 호출
+- **`PropertiesPanel.tsx`**: Input 노드 증분 처리 설정 UI 추가 (모드/기준컬럼/watermarkVar 토글)
+  - Output 노드 UPSERT 모드 시 PK 컬럼 입력 필드 추가
+
+### 동작 흐름
+```
+ExecutionService.execute()
+  → ExecutionLockService.tryLock()  // 중복 실행 방지
+  → ExecutionRouter.execute()
+       → analyze(): Input/Output 연결 DB 서버 비교
+       → 동일 서버 → SqlPushdownAdapter (기존 그대로)
+       → 다른 서버 → FetchAndProcessExecutor
+            → 소스 JDBC 스트리밍 fetch (10,000행 청크)
+            → tFilter 인메모리 필터
+            → tMap 인메모리 변환 (Expression 평가)
+            → Broadcast Join (LOOKUP 엣지 연결 테이블)
+            → 타겟 JDBC 배치 INSERT/UPSERT
+            → commit
+  → ExecutionLockService.unlock()   // finally
+```

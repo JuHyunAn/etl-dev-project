@@ -475,6 +475,7 @@ export default function JobDesignerPage() {
   const [isDirty, setIsDirty] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [running, setRunning] = useState(false);
+  const [cancelToken, setCancelToken] = useState<string | null>(null);
   const [bottomPanel, setBottomPanel] = useState<BottomPanel>("sql");
   const [executionResult, setExecutionResult] =
     useState<ExecutionResult | null>(null);
@@ -497,6 +498,7 @@ export default function JobDesignerPage() {
   const schemaResizeStartH = useRef(0);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [activeLogNodeId, setActiveLogNodeId] = useState<string | null>(null);
+  const [activeLogTableKey, setActiveLogTableKey] = useState<string | null>(null);
   const [contextVars, setContextVars] = useState<CtxVar[]>([]);
   const [showContextPanel, setShowContextPanel] = useState(false);
   const [contextPanelTop, setContextPanelTop] = useState(0);
@@ -949,8 +951,19 @@ export default function JobDesignerPage() {
     }
   };
 
+  const handleStop = async () => {
+    if (!cancelToken) return;
+    try {
+      await executionApi.cancel(cancelToken);
+    } catch {
+      // 이미 완료됐을 수 있음 — 무시
+    }
+  };
+
   const handleRun = async () => {
     if (!jobId) return;
+    const token = crypto.randomUUID();
+    setCancelToken(token);
     setRunning(true);
     setBottomPanel("logs");
     setExecutionResult(null);
@@ -992,7 +1005,7 @@ export default function JobDesignerPage() {
       const runtimeCtx: Record<string, string> = Object.fromEntries(
         Object.entries(ctxMap).filter(([, v]) => v.value.trim()).map(([k, v]) => [k, v.value])
       );
-      const result = await executionApi.run(jobId, runtimeCtx, previewMode);
+      const result = await executionApi.run(jobId, runtimeCtx, previewMode, token);
       setExecutionResult(result);
       useAppStore.getState().setLastExecution(result);
 
@@ -1140,6 +1153,7 @@ export default function JobDesignerPage() {
       );
     } finally {
       setRunning(false);
+      setCancelToken(null);
     }
   };
 
@@ -1439,16 +1453,28 @@ export default function JobDesignerPage() {
             </svg>
             Publish
           </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleRun}
-            disabled={running}
-            className="text-[#1268B3]"
-          >
-            {running ? (
-              <Spinner size="sm" />
-            ) : (
+          {running ? (
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleStop}
+              className="text-white"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M9 10h6v4H9z" />
+              </svg>
+              Stop
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleRun}
+              className="text-[#1268B3]"
+            >
               <svg
                 className="w-3.5 h-3.5"
                 fill="none"
@@ -1468,9 +1494,9 @@ export default function JobDesignerPage() {
                   d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                 />
               </svg>
-            )}
-            {running ? "Running..." : "Run"}
-          </Button>
+              Run
+            </Button>
+          )}
         </div>
       </div>
 
@@ -2079,7 +2105,7 @@ export default function JobDesignerPage() {
                 (() => {
                   const logNodes = executionResult
                     ? Object.entries(executionResult.nodeResults).filter(
-                        ([, r]) => r.rowSamples,
+                        ([, r]) => r.rowSamples || r.tableRowSamples,
                       )
                     : [];
                   const currentId =
@@ -2087,7 +2113,65 @@ export default function JobDesignerPage() {
                     logNodes.some(([id]) => id === activeLogNodeId)
                       ? activeLogNodeId
                       : (logNodes[0]?.[0] ?? null);
-                  const active = logNodes.find(([id]) => id === currentId);
+                  const activeEntry = logNodes.find(([id]) => id === currentId);
+                  const activeResult = activeEntry?.[1];
+
+                  // tableRowSamples가 있는 경우 서브탭 처리
+                  const tableKeys = activeResult?.tableRowSamples
+                    ? Object.keys(activeResult.tableRowSamples)
+                    : null;
+                  const currentTableKey =
+                    tableKeys &&
+                    activeLogTableKey &&
+                    tableKeys.includes(activeLogTableKey)
+                      ? activeLogTableKey
+                      : (tableKeys?.[0] ?? null);
+                  const activeData = activeResult?.tableRowSamples
+                    ? (currentTableKey
+                        ? activeResult.tableRowSamples[currentTableKey]
+                        : null)
+                    : activeResult?.rowSamples ?? null;
+
+                  const renderGrid = (data: { columns: string[]; rows: (string | number | boolean | null)[][] }) => (
+                    <div className="flex-1 overflow-auto">
+                      <table className="text-[11px] font-mono w-max min-w-full border-collapse">
+                        <thead className="sticky top-0 z-10" style={{ background: "#1a2233" }}>
+                          <tr>
+                            <th className="px-2 py-1.5 text-left text-[#484f58] font-medium border-r border-b border-[#21262d] w-8">#</th>
+                            {data.columns.map((col) => (
+                              <th key={col} className="px-3 py-1.5 text-left text-[#8b949e] font-medium border-r border-b border-[#21262d] whitespace-nowrap">
+                                {col}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.rows.map((row, ri) => (
+                            <tr
+                              key={ri}
+                              style={{ background: ri % 2 === 0 ? "#232b37" : "#1e2632" }}
+                              className="hover:bg-[#2a3547] transition-colors"
+                            >
+                              <td className="px-2 py-1 text-[#484f58] border-r border-[#21262d] text-center">{ri + 1}</td>
+                              {row.map((cell, ci) => (
+                                <td
+                                  key={ci}
+                                  className="px-3 py-1 border-r border-[#21262d] whitespace-nowrap max-w-[240px] truncate"
+                                  style={{
+                                    color: cell === null ? "#484f58" : typeof cell === "number" ? "#79c0ff" : typeof cell === "boolean" ? "#56d364" : "#c9d1d9",
+                                  }}
+                                  title={cell === null ? "NULL" : String(cell)}
+                                >
+                                  {cell === null ? <span className="italic text-[#484f58]">NULL</span> : String(cell)}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+
                   return (
                     <div className="flex-1 flex flex-col overflow-hidden">
                       {running && (
@@ -2109,102 +2193,58 @@ export default function JobDesignerPage() {
                       )}
                       {executionResult && logNodes.length > 0 && (
                         <>
-                          {/* 노드 탭 */}
+                          {/* 노드 탭 (T_LOG_ROW 노드별) */}
                           <div className="flex items-center gap-1 px-3 pt-1 pb-0 border-b border-[#30363d] flex-shrink-0">
                             {logNodes.map(([id, r]) => {
                               const label =
-                                (
-                                  nodes.find((n) => n.id === id)?.data as
-                                    | { label?: string }
-                                    | undefined
-                                )?.label ?? r.nodeType;
+                                (nodes.find((n) => n.id === id)?.data as { label?: string } | undefined)?.label ?? r.nodeType;
+                              const rowCount = r.tableRowSamples
+                                ? Object.values(r.tableRowSamples).reduce((s, d) => s + d.rows.length, 0)
+                                : (r.rowSamples?.rows.length ?? 0);
+                              const isMulti = !!r.tableRowSamples;
                               return (
                                 <button
                                   key={id}
-                                  onClick={() => setActiveLogNodeId(id)}
+                                  onClick={() => { setActiveLogNodeId(id); setActiveLogTableKey(null); }}
                                   className={`px-2.5 py-1.5 text-[10px] font-medium border-b-2 transition-colors whitespace-nowrap
-                                  ${
-                                    currentId === id
-                                      ? "border-[#f0883e] text-[#f0883e]"
-                                      : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
-                                  }`}
+                                    ${currentId === id ? "border-[#f0883e] text-[#f0883e]" : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"}`}
                                 >
                                   {label}
-                                  <span className="ml-1 text-[#484f58]">
-                                    ({r.rowSamples!.rows.length} rows)
-                                  </span>
+                                  {isMulti && (
+                                    <span className="ml-1 px-1 py-0.5 rounded text-[8px] bg-[#f0883e22] text-[#f0883e]">
+                                      {Object.keys(r.tableRowSamples!).length}개 테이블
+                                    </span>
+                                  )}
+                                  <span className="ml-1 text-[#484f58]">({rowCount} rows)</span>
                                 </button>
                               );
                             })}
                           </div>
-                          {/* 그리드 테이블 */}
-                          {active && active[1].rowSamples && (
-                            <div className="flex-1 overflow-auto">
-                              <table className="text-[11px] font-mono w-max min-w-full border-collapse">
-                                <thead
-                                  className="sticky top-0 z-10"
-                                  style={{ background: "#1a2233" }}
-                                >
-                                  <tr>
-                                    <th className="px-2 py-1.5 text-left text-[#484f58] font-medium border-r border-b border-[#21262d] w-8">
-                                      #
-                                    </th>
-                                    {active[1].rowSamples.columns.map((col) => (
-                                      <th
-                                        key={col}
-                                        className="px-3 py-1.5 text-left text-[#8b949e] font-medium border-r border-b border-[#21262d] whitespace-nowrap"
-                                      >
-                                        {col}
-                                      </th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {active[1].rowSamples.rows.map((row, ri) => (
-                                    <tr
-                                      key={ri}
-                                      style={{
-                                        background:
-                                          ri % 2 === 0 ? "#232b37" : "#1e2632",
-                                      }}
-                                      className="hover:bg-[#2a3547] transition-colors"
-                                    >
-                                      <td className="px-2 py-1 text-[#484f58] border-r border-[#21262d] text-center">
-                                        {ri + 1}
-                                      </td>
-                                      {row.map((cell, ci) => (
-                                        <td
-                                          key={ci}
-                                          className="px-3 py-1 border-r border-[#21262d] whitespace-nowrap max-w-[240px] truncate"
-                                          style={{
-                                            color:
-                                              cell === null
-                                                ? "#484f58"
-                                                : typeof cell === "number"
-                                                  ? "#79c0ff"
-                                                  : typeof cell === "boolean"
-                                                    ? "#56d364"
-                                                    : "#c9d1d9",
-                                          }}
-                                          title={
-                                            cell === null
-                                              ? "NULL"
-                                              : String(cell)
-                                          }
-                                        >
-                                          {cell === null ? (
-                                            <span className="italic text-[#484f58]">
-                                              NULL
-                                            </span>
-                                          ) : (
-                                            String(cell)
-                                          )}
-                                        </td>
-                                      ))}
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+
+                          {/* 테이블 서브탭 (tableRowSamples인 경우) */}
+                          {tableKeys && tableKeys.length > 1 && (
+                            <div className="flex items-center gap-1 px-3 pt-1 pb-0 border-b border-[#21262d] flex-shrink-0" style={{ background: "#161b22" }}>
+                              {tableKeys.map((tKey) => {
+                                const tData = activeResult!.tableRowSamples![tKey];
+                                return (
+                                  <button
+                                    key={tKey}
+                                    onClick={() => setActiveLogTableKey(tKey)}
+                                    className={`px-2 py-1 text-[9px] font-mono border-b-2 transition-colors whitespace-nowrap
+                                      ${currentTableKey === tKey ? "border-[#79c0ff] text-[#79c0ff]" : "border-transparent text-[#484f58] hover:text-[#8b949e]"}`}
+                                  >
+                                    {tKey}
+                                    <span className="ml-1 text-[#484f58]">({tData.rows.length})</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* 그리드 */}
+                          {activeData && (
+                            <div key={currentTableKey ?? "default"} className="flex-1 flex flex-col overflow-hidden">
+                              {renderGrid(activeData)}
                             </div>
                           )}
                         </>

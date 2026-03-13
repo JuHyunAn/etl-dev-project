@@ -132,36 +132,60 @@ function CodeBlock({ text }: { text: string }) {
   );
 }
 
-function buildConnectionContext(
-  conn: Connection,
-  tables: TableInfo[],
-  columnMap: Record<string, ColumnInfo[]>,
+function buildMultiConnectionContext(
+  entries: Array<{
+    conn: Connection;
+    tables: TableInfo[];
+    columnMap: Record<string, ColumnInfo[]>;
+  }>,
 ): string {
-  const tableLines = tables.map((t) => {
-    const key = t.schemaName ? `${t.schemaName}.${t.tableName}` : t.tableName;
-    const cols = columnMap[key];
-    if (cols && cols.length) {
-      const colDesc = cols
-        .map(
-          (c) =>
-            `${c.columnName}(${c.dataType}${c.isPrimaryKey ? ",PK" : ""}${!c.nullable ? ",NN" : ""})`,
-        )
-        .join(", ");
-      return `  - ${key}: [${colDesc}]`;
-    }
-    return `  - ${key}`;
+  if (entries.length === 0) return "";
+
+  const sections = entries.map((entry, idx) => {
+    const { conn, tables, columnMap } = entry;
+    const tableLines = tables.map((t) => {
+      const key = t.schemaName ? `${t.schemaName}.${t.tableName}` : t.tableName;
+      const cols = columnMap[key];
+      if (cols && cols.length) {
+        const colDesc = cols
+          .map(
+            (c) =>
+              `${c.columnName}(${c.dataType}${c.isPrimaryKey ? ",PK" : ""}${!c.nullable ? ",NN" : ""})`,
+          )
+          .join(", ");
+        return `    - ${key}: [${colDesc}]`;
+      }
+      return `    - ${key}`;
+    });
+
+    const dbLabel = conn.database
+      ? `database: ${conn.database}`
+      : "(all databases)";
+    const schemaLabel = conn.schema ? ` | schema: ${conn.schema}` : "";
+
+    return `[Connection ${idx + 1}] "${conn.name}"
+  connectionId: "${conn.id}"
+  DBMS: ${conn.dbType} | host: ${conn.host}:${conn.port} | ${dbLabel}${schemaLabel}
+  Tables (${tables.length}):
+${tableLines.length > 0 ? tableLines.join("\n") : "    (none loaded)"}`;
   });
 
-  return `Selected database connection for this pipeline:
-Name: "${conn.name}" | id: "${conn.id}" | DB: ${conn.dbType} | host: ${conn.host}:${conn.port} | database: ${conn.database}${conn.schema ? ` | schema: ${conn.schema}` : ""}
+  const rulesConn = entries
+    .map(
+      (e, i) =>
+        `  [Connection ${i + 1}] "${e.conn.name}" (${e.conn.dbType}) → connectionId: "${e.conn.id}"`,
+    )
+    .join("\n");
 
-Available tables and columns:
-${tableLines.join("\n")}
+  return `Selected database connections for this pipeline:
+${sections.join("\n\n")}
 
 RULES:
 - Use ONLY the tables listed above for T_JDBC_INPUT and T_JDBC_OUTPUT nodes.
-- Always set "connectionId": "${conn.id}" in the config.
+- Each node must have the correct "connectionId" matching its source/target connection:
+${rulesConn}
 - Use the exact table names (with schema prefix if shown) as the "tableName" value.
+- Different connections may have same-named tables — always use the correct connectionId.
 - If column info is available, use the actual column names for mappings.`;
 }
 
@@ -257,77 +281,77 @@ export default function AiAgentPanel({
   );
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // 커넥션 선택
-  const [selectedConnId, setSelectedConnId] = useState<string>("");
-  const [tables, setTables] = useState<TableInfo[]>([]);
-  const [columnMap, setColumnMap] = useState<Record<string, ColumnInfo[]>>({});
-  const [schemaLoading, setSchemaLoading] = useState(false);
-  const [schemaError, setSchemaError] = useState("");
+  // 커넥션 선택 (멀티)
+  const [selectedConnIds, setSelectedConnIds] = useState<string[]>([]);
+  const [tablesMap, setTablesMap] = useState<Record<string, TableInfo[]>>({});
+  const [columnMaps, setColumnMaps] = useState<Record<string, Record<string, ColumnInfo[]>>>({});
+  const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
+  const [schemaErrors, setSchemaErrors] = useState<Record<string, string>>({});
   const [tableListOpen, setTableListOpen] = useState(false);
+  const [connPickerOpen, setConnPickerOpen] = useState(false);
 
-  const selectedConn = connections.find((c) => c.id === selectedConnId) ?? null;
+  const toggleConnection = (connId: string) => {
+    setSelectedConnIds((prev) =>
+      prev.includes(connId) ? prev.filter((id) => id !== connId) : [...prev, connId],
+    );
+  };
 
-  // 커넥션 선택 시 테이블 + 컬럼 로드
+  // 커넥션 추가 시 테이블 + 컬럼 로드
   useEffect(() => {
-    if (!selectedConnId) {
-      setTables([]);
-      setColumnMap({});
-      return;
-    }
-    setSchemaLoading(true);
-    setSchemaError("");
-    setTables([]);
-    setColumnMap({});
+    selectedConnIds.forEach((connId) => {
+      if (tablesMap[connId] !== undefined || loadingIds.has(connId)) return;
 
-    schemaApi
-      .listTables(selectedConnId)
-      .then(async (tbls) => {
-        setTables(tbls);
-        // 테이블별 컬럼 병렬 로드
-        const results = await Promise.all(
-          tbls.map((t) =>
-            schemaApi
-              .getColumns(
-                selectedConnId,
-                t.tableName,
-                t.schemaName || undefined,
-              )
-              .then((cols) => ({
-                key: t.schemaName
-                  ? `${t.schemaName}.${t.tableName}`
-                  : t.tableName,
-                cols,
-              }))
-              .catch(() => ({
-                key: t.schemaName
-                  ? `${t.schemaName}.${t.tableName}`
-                  : t.tableName,
-                cols: [] as ColumnInfo[],
-              })),
-          ),
+      setLoadingIds((prev) => new Set(prev).add(connId));
+      setSchemaErrors((prev) => { const n = { ...prev }; delete n[connId]; return n; });
+
+      schemaApi
+        .listTables(connId)
+        .then(async (tbls) => {
+          setTablesMap((prev) => ({ ...prev, [connId]: tbls }));
+          const results = await Promise.all(
+            tbls.map((t) =>
+              schemaApi
+                .getColumns(connId, t.tableName, t.schemaName || undefined)
+                .then((cols) => ({
+                  key: t.schemaName ? `${t.schemaName}.${t.tableName}` : t.tableName,
+                  cols,
+                }))
+                .catch(() => ({
+                  key: t.schemaName ? `${t.schemaName}.${t.tableName}` : t.tableName,
+                  cols: [] as ColumnInfo[],
+                })),
+            ),
+          );
+          const map: Record<string, ColumnInfo[]> = {};
+          results.forEach((r) => { map[r.key] = r.cols; });
+          setColumnMaps((prev) => ({ ...prev, [connId]: map }));
+          console.group(`[AI Agent] "${connections.find((c) => c.id === connId)?.name}" 스키마 로드 완료`);
+          console.log("테이블 수:", tbls.length);
+          console.groupEnd();
+        })
+        .catch((e) =>
+          setSchemaErrors((prev) => ({
+            ...prev,
+            [connId]: e instanceof Error ? e.message : "스키마 로드 실패",
+          })),
+        )
+        .finally(() =>
+          setLoadingIds((prev) => { const s = new Set(prev); s.delete(connId); return s; }),
         );
-        const map: Record<string, ColumnInfo[]> = {};
-        results.forEach((r) => {
-          map[r.key] = r.cols;
-        });
-        setColumnMap(map);
-        console.group(
-          `[AI Agent] "${connections.find((c) => c.id === selectedConnId)?.name}" 스키마 로드 완료`,
-        );
-        console.log("테이블 수:", tbls.length);
-        tbls.forEach((t) => {
-          const key = t.schemaName
-            ? `${t.schemaName}.${t.tableName}`
-            : t.tableName;
-          console.log(`  ${key}:`, map[key]?.map((c) => c.columnName) ?? []);
-        });
-        console.groupEnd();
-      })
-      .catch((e) =>
-        setSchemaError(e instanceof Error ? e.message : "스키마 로드 실패"),
-      )
-      .finally(() => setSchemaLoading(false));
-  }, [selectedConnId]);
+    });
+
+    // 선택 해제된 커넥션 데이터 제거
+    setTablesMap((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((id) => { if (!selectedConnIds.includes(id)) delete next[id]; });
+      return next;
+    });
+    setColumnMaps((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((id) => { if (!selectedConnIds.includes(id)) delete next[id]; });
+      return next;
+    });
+  }, [selectedConnIds]);
 
   const apiKey = ENV_KEYS[provider];
   const hasKey = !!apiKey;
@@ -351,10 +375,15 @@ export default function AiAgentPanel({
     setError("");
 
     const contextParts: string[] = [];
-    if (selectedConn)
-      contextParts.push(
-        buildConnectionContext(selectedConn, tables, columnMap),
-      );
+    const connEntries = selectedConnIds
+      .map((id) => {
+        const conn = connections.find((c) => c.id === id);
+        if (!conn) return null;
+        return { conn, tables: tablesMap[id] ?? [], columnMap: columnMaps[id] ?? {} };
+      })
+      .filter((e): e is NonNullable<typeof e> => e !== null);
+    if (connEntries.length > 0)
+      contextParts.push(buildMultiConnectionContext(connEntries));
     if (nodes.length > 0) contextParts.push(buildPipelineContext(nodes, edges));
     if (executionResult)
       contextParts.push(buildExecutionContext(executionResult, nodes));
@@ -398,6 +427,10 @@ export default function AiAgentPanel({
     const spec = extractGraphSpec(content);
     if (!spec) return;
 
+    // 모든 선택된 커넥션의 columnMap을 병합
+    const mergedColumnMap: Record<string, ColumnInfo[]> = {};
+    Object.values(columnMaps).forEach((cm) => Object.assign(mergedColumnMap, cm));
+
     // T_JDBC_INPUT/OUTPUT 노드 config에 columnMap 데이터 주입
     const enriched = {
       ...spec,
@@ -405,8 +438,8 @@ export default function AiAgentPanel({
         if (n.type !== "T_JDBC_INPUT" && n.type !== "T_JDBC_OUTPUT") return n;
         const tableName = (n.config.tableName as string) ?? "";
         const cols =
-          columnMap[tableName] ??
-          columnMap[tableName.split(".").pop() ?? ""] ??
+          mergedColumnMap[tableName] ??
+          mergedColumnMap[tableName.split(".").pop() ?? ""] ??
           [];
         if (!cols.length) return n;
         return { ...n, config: { ...n.config, columns: cols } };
@@ -497,71 +530,120 @@ export default function AiAgentPanel({
           </select>
         </div>
 
-        {/* 커넥션 선택 */}
+        {/* 커넥션 선택 (멀티) */}
         <div className="mb-1.5">
-          <select
-            value={selectedConnId}
-            onChange={(e) => setSelectedConnId(e.target.value)}
-            className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#374151] rounded text-[10px] px-2 py-1
-              focus:outline-none focus:border-[#58a6ff]"
-          >
-            <option value="">
-              DB 커넥션 선택 (선택 시 테이블/컬럼 자동 로드)
-            </option>
-            {connections.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.dbType})
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* 스키마 로딩 상태 */}
-        {schemaLoading && (
-          <div className="flex items-center gap-1.5 text-[9px] text-[#94a3b8] py-1">
-            <Spinner size="sm" />
-            <span>테이블 및 컬럼 로딩 중...</span>
-          </div>
-        )}
-        {schemaError && (
-          <p className="text-[9px] text-[#f85149] py-1">{schemaError}</p>
-        )}
-        {!schemaLoading && !schemaError && tables.length > 0 && (
           <button
-            onClick={() => setTableListOpen((o) => !o)}
-            className="w-full flex items-center justify-between text-[9px] text-[#3fb950] py-1 hover:text-[#56d364] transition-colors"
+            onClick={() => setConnPickerOpen((o) => !o)}
+            className="w-full flex items-center justify-between bg-[#f8fafc] border border-[#d1d5db] text-[#374151] rounded text-[10px] px-2 py-1 hover:border-[#58a6ff] transition-colors"
           >
             <span>
-              ✓ {tables.length}개 테이블 ·{" "}
-              {Object.values(columnMap).reduce((s, c) => s + c.length, 0)}개
-              컬럼 로드됨
+              {selectedConnIds.length === 0
+                ? "DB 커넥션 선택 (복수 선택 가능)"
+                : `${selectedConnIds.length}개 커넥션 선택됨`}
             </span>
-            <span>{tableListOpen ? "▲" : "▼"}</span>
+            <span className="text-[#94a3b8]">{connPickerOpen ? "▲" : "▼"}</span>
           </button>
+          {connPickerOpen && (
+            <div
+              className="mt-0.5 rounded overflow-hidden"
+              style={{ border: "1px solid #d1d5db", background: "#f8fafc" }}
+            >
+              {connections.map((c) => {
+                const isSelected = selectedConnIds.includes(c.id);
+                const isLoading = loadingIds.has(c.id);
+                const err = schemaErrors[c.id];
+                const tbls = tablesMap[c.id];
+                return (
+                  <label
+                    key={c.id}
+                    className="flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-[#f1f5f9] border-b border-[#e2e8f0] last:border-0"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleConnection(c.id)}
+                      className="accent-[#58a6ff]"
+                    />
+                    <span className="flex-1 text-[10px] text-[#374151] truncate">
+                      {c.name}
+                      <span className="ml-1 text-[9px] text-[#94a3b8]">({c.dbType})</span>
+                      {c.database && <span className="ml-1 text-[9px] text-[#94a3b8]">{c.database}</span>}
+                    </span>
+                    {isSelected && isLoading && <Spinner size="sm" />}
+                    {isSelected && !isLoading && tbls && (
+                      <span className="text-[9px] text-[#3fb950]">{tbls.length}개</span>
+                    )}
+                    {isSelected && err && (
+                      <span className="text-[9px] text-[#f85149]">오류</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 스키마 에러 표시 */}
+        {Object.entries(schemaErrors).map(([connId, err]) => {
+          const conn = connections.find((c) => c.id === connId);
+          return (
+            <p key={connId} className="text-[9px] text-[#f85149] py-0.5">
+              {conn?.name ?? connId}: {err}
+            </p>
+          );
+        })}
+
+        {/* 로드된 테이블 요약 */}
+        {selectedConnIds.length > 0 && loadingIds.size === 0 && (
+          (() => {
+            const totalTables = Object.values(tablesMap).reduce((s, t) => s + t.length, 0);
+            const totalCols = Object.values(columnMaps).reduce(
+              (s, cm) => s + Object.values(cm).reduce((ss, cols) => ss + cols.length, 0), 0
+            );
+            return totalTables > 0 ? (
+              <button
+                onClick={() => setTableListOpen((o) => !o)}
+                className="w-full flex items-center justify-between text-[9px] text-[#3fb950] py-1 hover:text-[#56d364] transition-colors"
+              >
+                <span>✓ {totalTables}개 테이블 · {totalCols}개 컬럼 로드됨</span>
+                <span>{tableListOpen ? "▲" : "▼"}</span>
+              </button>
+            ) : null;
+          })()
         )}
 
-        {/* 테이블 목록 펼치기 */}
-        {tableListOpen && tables.length > 0 && (
+        {/* 테이블 목록 펼치기 — 커넥션별 그룹 */}
+        {tableListOpen && selectedConnIds.length > 0 && (
           <div
-            className="mt-1 max-h-32 overflow-y-auto rounded"
+            className="mt-1 max-h-40 overflow-y-auto rounded"
             style={{ border: "1px solid #e2e8f0", background: "#f8fafc" }}
           >
-            {tables.map((t) => {
-              const key = t.schemaName
-                ? `${t.schemaName}.${t.tableName}`
-                : t.tableName;
-              const cols = columnMap[key] ?? [];
+            {selectedConnIds.map((connId) => {
+              const conn = connections.find((c) => c.id === connId);
+              const tbls = tablesMap[connId] ?? [];
+              const cm = columnMaps[connId] ?? {};
+              if (tbls.length === 0) return null;
               return (
-                <div
-                  key={key}
-                  className="px-2 py-1 border-b border-[#e2e8f0] last:border-0"
-                >
-                  <p className="text-[10px] text-[#79c0ff] font-mono">{key}</p>
-                  {cols.length > 0 && (
-                    <p className="text-[9px] text-[#94a3b8] truncate">
-                      {cols.map((c) => c.columnName).join(", ")}
-                    </p>
-                  )}
+                <div key={connId}>
+                  <div className="px-2 py-1 bg-[#f1f5f9] border-b border-[#e2e8f0] sticky top-0">
+                    <span className="text-[9px] font-semibold text-[#64748b]">
+                      {conn?.name} <span className="text-[#94a3b8]">({conn?.dbType})</span>
+                    </span>
+                  </div>
+                  {tbls.map((t) => {
+                    const key = t.schemaName ? `${t.schemaName}.${t.tableName}` : t.tableName;
+                    const cols = cm[key] ?? [];
+                    return (
+                      <div key={key} className="px-2 py-1 border-b border-[#e2e8f0] last:border-0">
+                        <p className="text-[10px] text-[#79c0ff] font-mono">{key}</p>
+                        {cols.length > 0 && (
+                          <p className="text-[9px] text-[#94a3b8] truncate">
+                            {cols.map((c) => c.columnName).join(", ")}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
@@ -610,8 +692,8 @@ export default function AiAgentPanel({
               ETL 파이프라인을 설명해주세요
             </p>
             <p className="text-[12px] text-[#94a3b8] mt-1">
-              {selectedConn
-                ? `"${selectedConn.name}" 커넥션의 테이블을 활용합니다`
+              {selectedConnIds.length > 0
+                ? `${selectedConnIds.length}개 커넥션의 테이블을 활용합니다`
                 : "DB 커넥션을 선택하면 해당 테이블을 참조합니다."}
             </p>
           </div>

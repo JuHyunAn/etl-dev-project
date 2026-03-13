@@ -13,7 +13,8 @@ data class ConnectionCreateRequest(
     @field:NotNull val dbType: DbType,
     @field:NotBlank val host: String,
     @field:Min(1) @field:Max(65535) val port: Int,
-    @field:NotBlank val database: String,
+    // MariaDB/MySQL: 공란 허용 → 서버 전체 접근 (테이블명을 db.table 형식으로 참조)
+    val database: String = "",
     val schema: String? = null,
     @field:NotBlank val username: String,
     @field:NotBlank val password: String,

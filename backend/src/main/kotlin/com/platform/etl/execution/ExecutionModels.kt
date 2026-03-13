@@ -3,6 +3,7 @@ package com.platform.etl.execution
 import com.platform.etl.ir.JobIR
 import java.time.LocalDateTime
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class ExecutionRequest(
     val jobId: UUID,
@@ -18,7 +19,8 @@ data class ExecutionPlan(
     val ir: JobIR,
     val sortedNodeIds: List<String>,    // 위상 정렬된 실행 순서
     val context: Map<String, String>,
-    val previewMode: Boolean
+    val previewMode: Boolean,
+    val cancelFlag: AtomicBoolean = AtomicBoolean(false)
 )
 
 data class ExecutionResult(
@@ -47,7 +49,9 @@ data class NodeResult(
     val durationMs: Long = 0,
     val generatedSql: String? = null,
     val errorMessage: String? = null,
-    val rowSamples: LogRowData? = null
+    val rowSamples: LogRowData? = null,
+    // T_LOG_ROW가 여러 OUTPUT에 연결된 경우: 테이블명 → 해당 경로의 샘플 데이터
+    val tableRowSamples: Map<String, LogRowData>? = null
 )
 
 enum class ExecutionStatus {

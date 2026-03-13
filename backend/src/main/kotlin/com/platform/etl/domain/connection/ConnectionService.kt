@@ -79,7 +79,11 @@ class ConnectionService(
         conn.jdbcUrlOverride?.let { return it }
         return when (conn.dbType) {
             DbType.ORACLE -> "jdbc:oracle:thin:@${conn.host}:${conn.port}:${conn.database}"
-            DbType.MARIADB -> "jdbc:mysql://${conn.host}:${conn.port}/${conn.database}?useSSL=${conn.sslEnabled}&allowPublicKeyRetrieval=true"
+            DbType.MARIADB -> {
+                // database가 공란이면 서버 전체 접근 (테이블은 db.table 형식으로 참조)
+                val dbPart = if (conn.database.isBlank()) "" else "/${conn.database}"
+                "jdbc:mysql://${conn.host}:${conn.port}${dbPart}?useSSL=${conn.sslEnabled}&allowPublicKeyRetrieval=true"
+            }
             DbType.POSTGRESQL -> {
                 val schema = conn.schema?.let { "?currentSchema=$it" } ?: ""
                 "jdbc:postgresql://${conn.host}:${conn.port}/${conn.database}$schema"
