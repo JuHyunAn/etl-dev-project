@@ -2,7 +2,7 @@ import client from './client'
 import type {
   Connection, ConnectionCreateRequest, ConnectionTestResult,
   Project, Job, ExecutionResult, ExecutionSummary, TableInfo, ColumnInfo,
-  Schedule, ScheduleCreateRequest, ScheduleExecutionDetail
+  Schedule, ScheduleCreateRequest, ScheduleExecutionDetail, PreviewNodeResult
 } from '../types'
 
 // ── Connections ──────────────────────────────────────────────
@@ -78,6 +78,18 @@ export const executionApi = {
 
   getDetail: (id: string) =>
     client.get<ExecutionResult>(`/api/executions/${id}`).then(r => r.data),
+
+  previewNode: (
+    jobId: string,
+    nodeId: string,
+    outputNodeId?: string,
+    context?: Record<string, string>
+  ) =>
+    client.post<PreviewNodeResult>(`/api/jobs/${jobId}/preview-node`, {
+      nodeId,
+      outputNodeId: outputNodeId ?? null,
+      context: context ?? {},
+    }, { timeout: 30000 }).then(r => r.data),
 }
 
 // ── Schedules ─────────────────────────────────────────────────

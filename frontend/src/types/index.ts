@@ -1,3 +1,12 @@
+export interface PreviewNodeResult {
+  columns: string[]
+  rows: (unknown[])[]
+  rowCount: number
+  sql: string
+  durationMs: number
+  error?: string
+}
+
 export type DbType = 'POSTGRESQL' | 'ORACLE' | 'MARIADB' | 'MYSQL' | 'MSSQL'
 export type JobStatus = 'DRAFT' | 'PUBLISHED'
 export type ExecutionStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED'

@@ -224,6 +224,133 @@ class SqlPushdownCompiler(
     }
 
     /**
+     * Preview Mode용: T_JDBC_OUTPUT 기준으로 upstream CTE 체인을 빌드하고
+     * INSERT 없이 SELECT만 실행하여 실제 적재될 데이터를 미리 확인합니다.
+     */
+    fun compileForPreview(plan: ExecutionPlan, outputNode: NodeIR, maxRows: Int = 100): LogRowQuery {
+        val ir = plan.ir
+        val incomingEdges = ir.edges.groupBy { it.target }
+        val upstreamIds = collectUpstreamIds(outputNode.id, ir)
+
+        val inputNode = ir.nodes.find { it.id in upstreamIds && it.type == ComponentType.T_JDBC_INPUT }
+            ?: throw IllegalStateException("Output '${outputNode.label}': upstream INPUT 노드를 찾을 수 없습니다")
+        val connId = inputNode.config["connectionId"]?.toString()
+            ?: throw IllegalStateException("Output '${outputNode.label}': upstream connectionId 미설정")
+
+        val ctes = mutableListOf<Pair<String, String>>()
+        for (nodeId in plan.sortedNodeIds) {
+            var node = ir.nodes.find { it.id == nodeId } ?: continue
+            if (node.type == ComponentType.T_JDBC_OUTPUT) continue
+            if (nodeId !in upstreamIds) continue
+
+            // T_MAP: outputNode별 매핑 적용
+            if (node.type == ComponentType.T_MAP) {
+                @Suppress("UNCHECKED_CAST")
+                val outputMappings = node.config["outputMappings"] as? Map<String, Any?>
+                val specificMappings = outputMappings?.get(outputNode.id)
+                if (specificMappings != null) {
+                    node = node.copy(config = node.config + mapOf("mappings" to specificMappings))
+                }
+            }
+
+            val predecessorIds = (incomingEdges[nodeId] ?: emptyList())
+                .filter { it.linkType == LinkType.ROW }
+                .map { it.source }
+            val prevCte = predecessorIds.firstOrNull()?.let { cteNameOf(it) }
+
+            val body = buildCteSql(node, prevCte, predecessorIds) ?: continue
+            ctes.add(cteNameOf(nodeId) to body)
+        }
+
+        require(ctes.isNotEmpty()) { "Output '${outputNode.label}'에 컴파일 가능한 upstream 노드가 없습니다" }
+
+        val finalCte = ctes.last().first
+        val withClause = "WITH\n" + ctes.joinToString(",\n\n") { (name, body) ->
+            val indented = body.trimIndent().replace("\n", "\n  ")
+            "$name AS (\n  $indented\n)"
+        }
+
+        return LogRowQuery(
+            sql = "$withClause\nSELECT * FROM $finalCte LIMIT $maxRows",
+            connectionId = UUID.fromString(connId)
+        )
+    }
+
+    /**
+     * 임의 노드(targetNode) 기준으로 upstream CTE 체인을 빌드하고 SELECT만 반환합니다.
+     * - T_JDBC_OUTPUT이면 outputNode와 동일하므로 해당 output의 매핑을 적용합니다.
+     * - T_MAP이면 outputNode가 주어질 때 해당 output 매핑 적용, 없으면 첫 번째 output 기준.
+     * - 기타 변환 노드이면 targetNode까지의 CTE 체인을 그대로 SELECT.
+     */
+    fun compileForNodePreview(
+        plan: ExecutionPlan,
+        targetNode: NodeIR,
+        outputNode: NodeIR? = null,
+        maxRows: Int = 100
+    ): LogRowQuery {
+        val ir = plan.ir
+        val incomingEdges = ir.edges.groupBy { it.target }
+
+        // 실질적인 "조회 기준 노드" 결정:
+        // OUTPUT이면 자기 자신, 아니면 targetNode 까지의 upstream 포함
+        val resolvedOutputNode: NodeIR? = when {
+            targetNode.type == ComponentType.T_JDBC_OUTPUT -> targetNode
+            outputNode != null -> outputNode
+            // T_MAP이면 downstream 첫 OUTPUT 탐색
+            else -> ir.edges
+                .filter { it.source == targetNode.id && it.linkType == LinkType.ROW }
+                .mapNotNull { e -> ir.nodes.find { it.id == e.target } }
+                .firstOrNull { it.type == ComponentType.T_JDBC_OUTPUT }
+        }
+
+        val upstreamIds = collectUpstreamIds(targetNode.id, ir) + targetNode.id
+
+        val inputNode = ir.nodes.find { it.id in upstreamIds && it.type == ComponentType.T_JDBC_INPUT }
+            ?: throw IllegalStateException("'${targetNode.label}': upstream INPUT 노드를 찾을 수 없습니다")
+        val connId = inputNode.config["connectionId"]?.toString()
+            ?: throw IllegalStateException("'${targetNode.label}': upstream connectionId 미설정")
+
+        val ctes = mutableListOf<Pair<String, String>>()
+        for (nodeId in plan.sortedNodeIds) {
+            var node = ir.nodes.find { it.id == nodeId } ?: continue
+            if (node.type == ComponentType.T_JDBC_OUTPUT) continue
+            if (nodeId !in upstreamIds) continue
+
+            // T_MAP: resolvedOutputNode 기준 매핑 적용
+            if (node.type == ComponentType.T_MAP && resolvedOutputNode != null) {
+                @Suppress("UNCHECKED_CAST")
+                val outputMappings = node.config["outputMappings"] as? Map<String, Any?>
+                val specificMappings = outputMappings?.get(resolvedOutputNode.id)
+                    ?: outputMappings?.values?.firstOrNull()
+                if (specificMappings != null) {
+                    node = node.copy(config = node.config + mapOf("mappings" to specificMappings))
+                }
+            }
+
+            val predecessorIds = (incomingEdges[nodeId] ?: emptyList())
+                .filter { it.linkType == LinkType.ROW }
+                .map { it.source }
+            val prevCte = predecessorIds.firstOrNull()?.let { cteNameOf(it) }
+
+            val body = buildCteSql(node, prevCte, predecessorIds) ?: continue
+            ctes.add(cteNameOf(nodeId) to body)
+        }
+
+        require(ctes.isNotEmpty()) { "'${targetNode.label}' 노드에 컴파일 가능한 upstream이 없습니다" }
+
+        val finalCte = ctes.last().first
+        val withClause = "WITH\n" + ctes.joinToString(",\n\n") { (name, body) ->
+            val indented = body.trimIndent().replace("\n", "\n  ")
+            "$name AS (\n  $indented\n)"
+        }
+
+        return LogRowQuery(
+            sql = "$withClause\nSELECT * FROM $finalCte LIMIT $maxRows",
+            connectionId = UUID.fromString(connId)
+        )
+    }
+
+    /**
      * T_LOG_ROW → 특정 T_JDBC_OUTPUT 사이의 변환 노드까지 포함하여 컴파일합니다.
      * T_LOG_ROW 이후 T_MAP 등 downstream 변환이 있을 때, 실제로 OUTPUT에 쓰일 데이터를 캡처합니다.
      */
@@ -248,9 +375,19 @@ class SqlPushdownCompiler(
 
         val ctes = mutableListOf<Pair<String, String>>()
         for (nodeId in plan.sortedNodeIds) {
-            val node = ir.nodes.find { it.id == nodeId } ?: continue
+            var node = ir.nodes.find { it.id == nodeId } ?: continue
             if (node.type == ComponentType.T_JDBC_OUTPUT) continue
             if (nodeId !in allIds) continue
+
+            // T_MAP: outputNode별 매핑 적용 (메인 컴파일러와 동일)
+            if (node.type == ComponentType.T_MAP) {
+                @Suppress("UNCHECKED_CAST")
+                val outputMappings = node.config["outputMappings"] as? Map<String, Any?>
+                val specificMappings = outputMappings?.get(outputNode.id)
+                if (specificMappings != null) {
+                    node = node.copy(config = node.config + mapOf("mappings" to specificMappings))
+                }
+            }
 
             val predecessorIds = (incomingEdges[nodeId] ?: emptyList())
                 .filter { it.linkType == LinkType.ROW }

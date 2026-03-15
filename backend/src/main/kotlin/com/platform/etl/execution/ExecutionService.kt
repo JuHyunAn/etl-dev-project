@@ -148,6 +148,51 @@ class ExecutionService(
         }
     }
 
+    fun previewNode(
+        jobId: UUID,
+        nodeId: String,
+        outputNodeId: String?,
+        context: Map<String, String> = emptyMap()
+    ): PreviewNodeResult {
+        val job = jobService.get(jobId)
+        val ir = objectMapper.readValue(job.irJson ?: "{}", com.platform.etl.ir.JobIR::class.java)
+        val plan = buildPlan(jobId, ir, context, previewMode = true)
+
+        val targetNode = ir.nodes.find { it.id == nodeId }
+            ?: return PreviewNodeResult(error = "노드 '$nodeId'를 찾을 수 없습니다")
+        val outputNode = outputNodeId?.let { oid -> ir.nodes.find { it.id == oid } }
+
+        return try {
+            val query = sqlPushdownAdapter.compiler.compileForNodePreview(plan, targetNode, outputNode)
+            val conn = sqlPushdownAdapter.connectionService.get(query.connectionId)
+            val jdbcUrl = sqlPushdownAdapter.connectionService.buildJdbcUrl(conn)
+            val password = sqlPushdownAdapter.connectionService.getDecryptedPassword(conn.id)
+            val startMs = System.currentTimeMillis()
+
+            java.sql.DriverManager.getConnection(jdbcUrl, conn.username, password).use { jdbc ->
+                jdbc.createStatement().use { stmt ->
+                    stmt.executeQuery(query.sql).use { rs ->
+                        val meta = rs.metaData
+                        val columns = (1..meta.columnCount).map { meta.getColumnName(it) }
+                        val rows = mutableListOf<List<Any?>>()
+                        while (rs.next()) {
+                            rows += (1..meta.columnCount).map { rs.getObject(it) }
+                        }
+                        PreviewNodeResult(
+                            columns = columns,
+                            rows = rows,
+                            rowCount = rows.size,
+                            sql = query.sql,
+                            durationMs = System.currentTimeMillis() - startMs
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            PreviewNodeResult(error = e.message ?: "Unknown error")
+        }
+    }
+
     fun previewIr(irJson: String, context: Map<String, String> = emptyMap()): ExecutionResult {
         val ir = objectMapper.readValue(irJson, JobIR::class.java)
         val plan = buildPlan(UUID.randomUUID(), ir, context, previewMode = true)

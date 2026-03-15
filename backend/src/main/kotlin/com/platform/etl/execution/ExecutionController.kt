@@ -11,6 +11,21 @@ data class RunRequest(
     val cancelToken: String? = null
 )
 
+data class PreviewNodeRequest(
+    val nodeId: String,
+    val outputNodeId: String? = null,
+    val context: Map<String, String> = emptyMap()
+)
+
+data class PreviewNodeResult(
+    val columns: List<String> = emptyList(),
+    val rows: List<List<Any?>> = emptyList(),
+    val rowCount: Int = 0,
+    val sql: String = "",
+    val durationMs: Long = 0,
+    val error: String? = null
+)
+
 data class PreviewIrRequest(
     val irJson: String,
     val context: Map<String, String> = emptyMap()
@@ -30,6 +45,12 @@ class ExecutionController(private val service: ExecutionService) {
         return if (cancelled) ResponseEntity.ok(mapOf("cancelled" to true))
         else ResponseEntity.notFound().build()
     }
+
+    @PostMapping("/jobs/{jobId}/preview-node")
+    fun previewNode(
+        @PathVariable jobId: UUID,
+        @RequestBody req: PreviewNodeRequest
+    ) = service.previewNode(jobId, req.nodeId, req.outputNodeId, req.context)
 
     @PostMapping("/execution/preview")
     fun previewIr(@RequestBody req: PreviewIrRequest) =

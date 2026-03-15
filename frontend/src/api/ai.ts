@@ -96,6 +96,39 @@ One-line summary of what the pipeline does, then JSON only:
 \`\`\`
 Edges use 0-based array indices. Always include connectionId from the provided connection context.
 
+### T_MAP with multiple outputs (REQUIRED format when T_MAP → 2+ T_JDBC_OUTPUT)
+- Add \`"outputIndex": N\` (0-based) to each edge leaving T_MAP.
+- Add \`"mappings"\` in T_MAP config: one entry per output, each with its own column list.
+- Each output must only reference columns that exist in the target table — never copy another output's column list.
+
+\`\`\`json
+{
+  "nodes": [
+    { "type": "T_JDBC_INPUT",  "label": "Read src", "config": { "connectionId": "conn-A", "tableName": "schema.src_table" } },
+    { "type": "T_MAP", "label": "Split", "config": {
+        "mappings": [
+          { "outputName": "Output 0", "columns": [
+              { "source": "id",   "target": "id",   "dataType": "INTEGER" },
+              { "source": "name", "target": "name", "dataType": "VARCHAR" }
+          ]},
+          { "outputName": "Output 1", "columns": [
+              { "source": "id",        "target": "id",          "dataType": "INTEGER" },
+              { "source": "name",      "target": "name",        "dataType": "VARCHAR" },
+              { "expression": "NOW()", "target": "loaded_at",   "dataType": "TIMESTAMP" }
+          ]}
+        ]
+    }},
+    { "type": "T_JDBC_OUTPUT", "label": "Write DB-A", "config": { "connectionId": "conn-A", "tableName": "schema.dst_a", "writeMode": "INSERT" } },
+    { "type": "T_JDBC_OUTPUT", "label": "Write DB-B", "config": { "connectionId": "conn-B", "tableName": "schema.dst_b", "writeMode": "INSERT" } }
+  ],
+  "edges": [
+    { "source": 0, "target": 1 },
+    { "source": 1, "target": 2, "outputIndex": 0 },
+    { "source": 1, "target": 3, "outputIndex": 1 }
+  ]
+}
+\`\`\`
+
 ## 2. Pipeline Fix (Patch)
 Format:
 - 🔴 **문제**: [root cause, 1 sentence]
@@ -274,7 +307,7 @@ export interface AiNodeSpec {
 }
 export interface AiGraphSpec {
   nodes: AiNodeSpec[]
-  edges: { source: number; target: number }[]
+  edges: { source: number; target: number; outputIndex?: number }[]
 }
 
 export function extractGraphSpec(text: string): AiGraphSpec | null {

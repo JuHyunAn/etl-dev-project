@@ -30,6 +30,7 @@ import MappingEditorModal from "../components/job/MappingEditorModal";
 import { type MappingRow } from "../utils/mapping";
 import SchemaTree from "../components/job/SchemaTree";
 import AiAgentPanel from "../components/job/AiAgentPanel";
+import PreviewGrid from "../components/job/PreviewGrid";
 import { nodeTypes } from "../components/job/CustomNodes";
 import type {
   ComponentType,
@@ -39,12 +40,13 @@ import type {
   ExecutionResult,
   ColumnInfo,
   Schedule,
+  PreviewNodeResult,
 } from "../types";
 import type { AiGraphSpec, AiPatchSpec } from "../api/ai";
 import { buildAutoMappings } from "../utils/mapping";
 import Editor from "@monaco-editor/react";
 
-type BottomPanel = "sql" | "logs" | "rowlogs" | "summary" | "workflow" | null;
+type BottomPanel = "sql" | "logs" | "rowlogs" | "summary" | "workflow" | "schedule" | "preview" | null;
 
 type EtlNodeData = {
   label: string;
@@ -497,6 +499,10 @@ export default function JobDesignerPage() {
   const schemaResizeStartY = useRef(0);
   const schemaResizeStartH = useRef(0);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
+  const [previewOutputNodeId, setPreviewOutputNodeId] = useState<string | null>(null);
+  const [previewResult, setPreviewResult] = useState<PreviewNodeResult | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [activeLogNodeId, setActiveLogNodeId] = useState<string | null>(null);
   const [activeLogTableKey, setActiveLogTableKey] = useState<string | null>(null);
   const [contextVars, setContextVars] = useState<CtxVar[]>([]);
@@ -508,6 +514,13 @@ export default function JobDesignerPage() {
     x: number;
     y: number;
   } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "error" | "warn" | "info" } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((message: string, type: "error" | "warn" | "info" = "warn") => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ message, type });
+    toastTimerRef.current = setTimeout(() => setToast(null), 3000);
+  }, []);
   const [pendingTrigger, setPendingTrigger] = useState<{
     sourceNodeId: string;
     condition: TriggerCondition;
@@ -585,20 +598,37 @@ export default function JobDesignerPage() {
       .finally(() => setLoading(false));
   }, [projectId, jobId]);
 
+  // 단일 ROW 출력만 허용하는 컴포넌트 (Talend 기준)
+  const SINGLE_ROW_OUTPUT_TYPES: ComponentType[] = [
+    "T_LOG_ROW", "T_FILTER_ROW", "T_CONVERT_TYPE", "T_REPLACE", "T_SORT_ROW", "T_AGGREGATE_ROW",
+  ] as ComponentType[];
+
   const onConnect = useCallback(
     (params: FlowConnection) => {
-      setEdges((eds) =>
-        addEdge(
-          {
-            ...params,
-            animated: false,
-            type: "smoothstep", style: { stroke: "#94a3b8", strokeWidth: 1.5 },
-          },
+      setEdges((eds) => {
+        // TRIGGER 엣지는 제한 없음
+        const isTrigger = (params as { data?: { linkType?: string } }).data?.linkType === "TRIGGER";
+        if (!isTrigger) {
+          const srcNode = nodes.find((n) => n.id === params.source);
+          const srcType = (srcNode?.data as EtlNodeData)?.componentType;
+          if (srcType && SINGLE_ROW_OUTPUT_TYPES.includes(srcType)) {
+            const existingRowOut = eds.some(
+              (e) => e.source === params.source &&
+                ((e.data as { linkType?: string })?.linkType !== "TRIGGER"),
+            );
+            if (existingRowOut) {
+              showToast(`${srcType}은 1개의 main Row만 연결할 수 있습니다.`);
+              return eds;
+            }
+          }
+        }
+        return addEdge(
+          { ...params, animated: false, type: "smoothstep", style: { stroke: "#94a3b8", strokeWidth: 1.5 } },
           eds,
-        ),
-      );
+        );
+      });
     },
-    [setEdges],
+    [setEdges, nodes],
   );
 
   const onNodeClick = useCallback(
@@ -659,6 +689,14 @@ export default function JobDesignerPage() {
     setPendingTrigger(null);
   }, []);
 
+  // Talend 방식: 동일 타입 컴포넌트에 _1, _2 ... 순번 자동 부여
+  // existingLabels: 현재 캔버스 + 이미 처리한 신규 노드들의 label 집합
+  const nextNodeLabel = (baseLabel: string, existingLabels: Set<string>): string => {
+    let i = 1;
+    while (existingLabels.has(`${baseLabel}_${i}`)) i++;
+    return `${baseLabel}_${i}`;
+  };
+
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
@@ -675,12 +713,15 @@ export default function JobDesignerPage() {
         y: e.clientY - bounds.top,
       });
 
+      const existingLabels = new Set(nodes.map((n) => (n.data as EtlNodeData).label));
+      const label = nextNodeLabel(dragType.label, existingLabels);
+
       const newNode: Node = {
         id: `${dragType.type}-${Date.now()}`,
         type: "etlNode",
         position,
         data: {
-          label: dragType.label,
+          label,
           componentType: dragType.type,
           config: {},
           status: "idle",
@@ -689,7 +730,7 @@ export default function JobDesignerPage() {
       setNodes((ns) => [...ns, newNode]);
       setDragType(null);
     },
-    [dragType, rfInstance, setNodes],
+    [dragType, rfInstance, setNodes, nodes],
   );
 
   const handleUpdateNode = useCallback(
@@ -716,57 +757,128 @@ export default function JobDesignerPage() {
         y: window.innerHeight / 2,
       });
       const ts = Date.now();
-      const newNodes: Node[] = spec.nodes.map((n, i) => ({
-        id: `${n.type}-ai-${ts}-${i}`,
-        type: "etlNode",
-        position: {
-          x: center.x + i * 220 - (spec.nodes.length - 1) * 110,
-          y: center.y,
-        },
-        data: {
-          label: n.label,
-          componentType: n.type as ComponentType,
-          config: n.config ?? {},
-          status: "idle",
-        } as EtlNodeData,
+      // 기존 캔버스 label + 이번 배치에서 이미 쓴 label을 합산해 순번 부여
+      const usedLabels = new Set(nodes.map((n) => (n.data as EtlNodeData).label));
+      const newNodes: Node[] = spec.nodes.map((n, i) => {
+        const label = nextNodeLabel(n.label, usedLabels);
+        usedLabels.add(label);
+        return {
+          id: `${n.type}-ai-${ts}-${i}`,
+          type: "etlNode",
+          position: {
+            x: center.x + i * 220 - (spec.nodes.length - 1) * 110,
+            y: center.y,
+          },
+          data: {
+            label,
+            componentType: n.type as ComponentType,
+            config: n.config ?? {},
+            status: "idle",
+          } as EtlNodeData,
+        };
+      });
+      // outputIndex 보존을 위해 spec.edges와 newEdges를 함께 관리
+      const specEdgesWithNodes = spec.edges.map((e, i) => ({
+        id: `ai-edge-${ts}-${i}`,
+        source: newNodes[e.source]?.id ?? "",
+        target: newNodes[e.target]?.id ?? "",
+        outputIndex: e.outputIndex,
+        animated: false,
+        type: "smoothstep" as const,
+        style: { stroke: "#94a3b8", strokeWidth: 1.5 },
       }));
-      const newEdges: Edge[] = spec.edges
-        .map((e, i) => ({
-          id: `ai-edge-${ts}-${i}`,
-          source: newNodes[e.source]?.id ?? "",
-          target: newNodes[e.target]?.id ?? "",
-          animated: false,
-          type: "smoothstep", style: { stroke: "#94a3b8", strokeWidth: 1.5 },
-        }))
-        .filter((e) => e.source && e.target);
+      const newEdges: Edge[] = specEdgesWithNodes
+        .filter((e) => e.source && e.target)
+        .map(({ outputIndex: _oi, ...edge }) => edge);
 
-      // T_MAP 노드에 자동 매핑 적용
+      // T_MAP 노드에 매핑 적용 — 항상 타겟 컬럼 기준 Auto Map과 동일하게 동작
       const finalNodes = newNodes.map((node) => {
         const data = node.data as EtlNodeData;
         if (data.componentType !== "T_MAP") return node;
 
-        // 이 T_MAP 노드로 들어오는 엣지의 소스 노드 수집
-        const inputCols: { nodeId: string; cols: ColumnInfo[] }[] = newEdges
-          .filter((e) => e.target === node.id)
-          .map((e) => {
+        const outputMappings: Record<string, MappingRow[]> = {};
+
+        // AI가 config.mappings를 제공한 경우 expression 힌트로 추출
+        type AiCol = { source?: string; expression?: string; target: string };
+        type AiGroup = { outputName?: string; columns?: AiCol[] };
+        const aiMappings = Array.isArray(data.config.mappings)
+          ? (data.config.mappings as AiGroup[])
+          : null;
+
+        // 소스 컬럼 수집 (T_MAP으로 들어오는 모든 입력 노드)
+        const allSourceCols: { nodeId: string; col: ColumnInfo }[] = specEdgesWithNodes
+          .filter((e) => e.target === node.id && e.source)
+          .flatMap((e) => {
             const srcNode = newNodes.find((n) => n.id === e.source);
-            if (!srcNode) return null;
-            const srcData = srcNode.data as EtlNodeData;
-            const cols = Array.isArray(srcData.config.columns)
-              ? (srcData.config.columns as ColumnInfo[])
+            if (!srcNode) return [];
+            const cols = Array.isArray((srcNode.data as EtlNodeData).config.columns)
+              ? ((srcNode.data as EtlNodeData).config.columns as ColumnInfo[])
               : [];
-            return { nodeId: srcNode.id, cols };
-          })
-          .filter(Boolean) as { nodeId: string; cols: ColumnInfo[] }[];
+            return cols.map((col) => ({ nodeId: srcNode.id, col }));
+          });
 
-        const mappings = inputCols.flatMap(({ nodeId, cols }) =>
-          buildAutoMappings(nodeId, cols),
-        );
+        // 출력 노드별 타겟 컬럼 기준 Auto Map (모달 Auto Map과 동일)
+        const outEdges = specEdgesWithNodes
+          .filter((e) => e.source === node.id && e.target)
+          .sort((a, b) => (a.outputIndex ?? 0) - (b.outputIndex ?? 0));
 
-        if (!mappings.length) return node;
+        outEdges.forEach((outEdge) => {
+          const outNode = newNodes.find((n) => n.id === outEdge.target);
+          const outCols = Array.isArray((outNode?.data as EtlNodeData)?.config.columns)
+            ? ((outNode!.data as EtlNodeData).config.columns as ColumnInfo[])
+            : [];
+
+          // AI expression 힌트: outputIndex 또는 순서로 해당 그룹 찾기
+          const aiGroup: AiGroup | null = aiMappings
+            ? (aiMappings[outEdge.outputIndex ?? 0] ?? aiMappings[0] ?? null)
+            : null;
+          const aiExprMap = new Map<string, string>(
+            (aiGroup?.columns ?? [])
+              .filter((c) => c.expression)
+              .map((c) => [c.target.toLowerCase(), c.expression!]),
+          );
+
+          let rows: MappingRow[];
+          if (outCols.length > 0) {
+            // 타겟 컬럼 전체를 행으로 생성 — Auto Map과 동일
+            const targetMap = new Map(outCols.map((c) => [c.columnName.toLowerCase(), c.dataType.toUpperCase()]));
+            rows = Array.from(targetMap.entries()).map(([targetCol, targetType], idx) => {
+              const matched = allSourceCols.find(({ col }) => col.columnName.toLowerCase() === targetCol);
+              const aiExpr = aiExprMap.get(targetCol) ?? "";
+              if (matched) {
+                const auto = buildAutoMappings(matched.nodeId, [matched.col], targetMap)[0];
+                return aiExpr ? { ...auto, expression: aiExpr } : auto;
+              }
+              return {
+                id: `auto-empty-${targetCol}-${ts}-${idx}`,
+                sourceNodeId: "",
+                sourceColumn: "",
+                targetName: targetCol,
+                expression: aiExpr,
+                type: targetType,
+              };
+            });
+          } else {
+            // 타겟 컬럼 정보 없으면 소스 기준 폴백
+            rows = allSourceCols.map(({ nodeId: nid, col }) => buildAutoMappings(nid, [col])[0]);
+          }
+
+          if (rows.length > 0) outputMappings[outEdge.target] = rows;
+        });
+
+        if (outEdges.length === 0 && allSourceCols.length > 0) {
+          const rows = allSourceCols.map(({ nodeId: nid, col }) => buildAutoMappings(nid, [col])[0]);
+          outputMappings[""] = rows;
+        }
+
+        if (Object.keys(outputMappings).length === 0) return node;
+
+        // config.mappings(AI 원본)는 제거하고 outputMappings만 저장
+        const { mappings: _m, ...restConfig } = data.config as Record<string, unknown>;
+        void _m;
         return {
           ...node,
-          data: { ...data, config: { ...data.config, mappings } },
+          data: { ...data, config: { ...restConfig, outputMappings } },
         };
       });
 
@@ -1154,6 +1266,29 @@ export default function JobDesignerPage() {
     } finally {
       setRunning(false);
       setCancelToken(null);
+    }
+  };
+
+  const handlePreviewNode = async (nodeId: string, outputNodeId?: string) => {
+    if (!jobId || !projectId) return;
+    setPreviewNodeId(nodeId);
+    setPreviewOutputNodeId(outputNodeId ?? null);
+    setPreviewResult(null);
+    setPreviewLoading(true);
+    setBottomPanel("preview");
+    try {
+      await jobsApi.update(projectId, jobId, { irJson: JSON.stringify(flowToIR(jobId, nodes, edges, buildCtxMap(contextVars))) });
+      const ctxMap = buildCtxMap(contextVars);
+      const runtimeCtx: Record<string, string> = Object.fromEntries(
+        Object.entries(ctxMap).filter(([, v]) => v.value.trim()).map(([k, v]) => [k, v.value])
+      );
+      const result = await executionApi.previewNode(jobId, nodeId, outputNodeId, runtimeCtx);
+      setPreviewResult(result);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setPreviewResult({ columns: [], rows: [], rowCount: 0, sql: "", durationMs: 0, error: msg });
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -1676,6 +1811,39 @@ export default function JobDesignerPage() {
               </>
             )}
 
+            {/* 토스트 알림 */}
+            {toast && (
+              <div
+                className="fixed z-[2000] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm pointer-events-none"
+                style={{
+                  top: "10%",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  background: toast.type === "error" ? "#fef2f2" : toast.type === "warn" ? "#fffbeb" : "#eff6ff",
+                  border: `1px solid ${toast.type === "error" ? "#fca5a5" : toast.type === "warn" ? "#fcd34d" : "#93c5fd"}`,
+                  color: toast.type === "error" ? "#dc2626" : toast.type === "warn" ? "#92400e" : "#1d4ed8",
+                  maxWidth: 400,
+                }}
+              >
+                {toast.type === "error" && (
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                )}
+                {toast.type === "warn" && (
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                  </svg>
+                )}
+                {toast.type === "info" && (
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                )}
+                <span>{toast.message}</span>
+              </div>
+            )}
+
             {/* 우클릭 컨텍스트 메뉴 */}
             {nodeContextMenu && (
               <div
@@ -1740,6 +1908,61 @@ export default function JobDesignerPage() {
                   <span className="w-2 h-2 rounded-full bg-[#dc2626] flex-shrink-0" />
                   On Component Error
                 </button>
+                {/* 데이터 미리보기 */}
+                <div
+                  className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider mt-1"
+                  style={{ color: "#94a3b8", borderTop: "1px solid #e2e8f0" }}
+                >
+                  Preview
+                </div>
+                {(() => {
+                  const ctxNode = nodes.find(n => n.id === nodeContextMenu.nodeId);
+                  const ctxType = (ctxNode?.data as EtlNodeData)?.componentType;
+                  // T_MAP: output별로 항목 생성
+                  if (ctxType === "T_MAP") {
+                    const outEdges = edges.filter(e => e.source === nodeContextMenu.nodeId);
+                    if (outEdges.length === 0) {
+                      return (
+                        <button
+                          onClick={() => { handlePreviewNode(nodeContextMenu.nodeId); setNodeContextMenu(null); }}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors"
+                          style={{ color: "#374151" }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#eff6ff"; }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; }}
+                        >
+                          <span className="text-[#6366f1]">▶</span> 데이터 미리보기
+                        </button>
+                      );
+                    }
+                    return outEdges.map(outEdge => {
+                      const targetNode = nodes.find(n => n.id === outEdge.target);
+                      const targetLabel = (targetNode?.data as EtlNodeData)?.label ?? outEdge.target;
+                      return (
+                        <button
+                          key={outEdge.target}
+                          onClick={() => { handlePreviewNode(nodeContextMenu.nodeId, outEdge.target); setNodeContextMenu(null); }}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors"
+                          style={{ color: "#374151" }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#eff6ff"; }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; }}
+                        >
+                          <span className="text-[#6366f1]">▶</span> 미리보기 → {targetLabel}
+                        </button>
+                      );
+                    });
+                  }
+                  return (
+                    <button
+                      onClick={() => { handlePreviewNode(nodeContextMenu.nodeId); setNodeContextMenu(null); }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors"
+                      style={{ color: "#374151" }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#eff6ff"; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; }}
+                    >
+                      <span className="text-[#6366f1]">▶</span> 데이터 미리보기
+                    </button>
+                  );
+                })()}
               </div>
             )}
 
@@ -1865,6 +2088,22 @@ export default function JobDesignerPage() {
                     }`}
                 >
                   Job Summary
+                </button>
+                <button
+                  onClick={() => setBottomPanel("preview")}
+                  className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
+                    ${
+                      bottomPanel === "preview"
+                        ? "border-[#6366f1] text-[#6366f1]"
+                        : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
+                    }`}
+                >
+                  Data Preview
+                  {previewResult && !previewResult.error && (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] bg-[#1a1a3a] text-[#818cf8]">
+                      {previewResult.rowCount}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => setBottomPanel("schedule")}
@@ -2252,6 +2491,37 @@ export default function JobDesignerPage() {
                     </div>
                   );
                 })()}
+
+              {bottomPanel === "preview" && (() => {
+                const previewNode = nodes.find(n => n.id === previewNodeId);
+                const previewNodeLabel = (previewNode?.data as EtlNodeData)?.label ?? previewNodeId ?? "";
+                const previewNodeType = (previewNode?.data as EtlNodeData)?.componentType;
+                const isMap = previewNodeType === "T_MAP";
+                // multi-output 옵션 (T_MAP)
+                const outputOptions = isMap
+                  ? edges.filter(e => e.source === previewNodeId).map(e => {
+                      const tgt = nodes.find(n => n.id === e.target);
+                      return { nodeId: e.target, label: (tgt?.data as EtlNodeData)?.label ?? e.target };
+                    })
+                  : undefined;
+                const outputLabel = previewOutputNodeId
+                  ? (nodes.find(n => n.id === previewOutputNodeId)?.data as EtlNodeData)?.label
+                  : undefined;
+                return (
+                  <div className="flex-1 overflow-hidden bg-white">
+                    <PreviewGrid
+                      nodeLabel={previewNodeLabel}
+                      outputLabel={outputLabel}
+                      result={previewResult}
+                      loading={previewLoading}
+                      onRefresh={() => handlePreviewNode(previewNodeId!, previewOutputNodeId ?? undefined)}
+                      outputOptions={outputOptions}
+                      selectedOutputId={previewOutputNodeId ?? undefined}
+                      onOutputChange={(newOutputId) => handlePreviewNode(previewNodeId!, newOutputId)}
+                    />
+                  </div>
+                );
+              })()}
 
               {bottomPanel === "schedule" && (
                 <SchedulePanel jobId={jobId ?? ""} />

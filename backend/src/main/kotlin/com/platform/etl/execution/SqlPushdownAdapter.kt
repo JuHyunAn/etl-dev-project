@@ -11,8 +11,8 @@ import java.time.format.DateTimeFormatter
 
 @Component
 class SqlPushdownAdapter(
-    private val connectionService: ConnectionService,
-    private val compiler: SqlPushdownCompiler
+    internal val connectionService: ConnectionService,
+    internal val compiler: SqlPushdownCompiler
 ) : ExecutionEngine {
 
     override val engineType = "sql_pushdown"
@@ -630,9 +630,39 @@ class SqlPushdownAdapter(
         sharedConnections: MutableMap<String, java.sql.Connection>? = null
     ): NodeResult {
         if (plan.previewMode) {
-            return NodeResult(node.id, node.type.name, ExecutionStatus.SKIPPED,
-                durationMs = System.currentTimeMillis() - startMs,
-                generatedSql = "[Preview Mode: Output 건너뜀]")
+            // INSERT 없이 CTE SELECT만 실행하여 실제 적재될 데이터 미리 보기
+            return try {
+                val query = compiler.compileForPreview(plan, node)
+                val conn = connectionService.get(query.connectionId)
+                val jdbcUrl = connectionService.buildJdbcUrl(conn)
+                val password = connectionService.getDecryptedPassword(conn.id)
+
+                DriverManager.getConnection(jdbcUrl, conn.username, password).use { jdbc ->
+                    jdbc.createStatement().use { stmt ->
+                        stmt.executeQuery(query.sql).use { rs ->
+                            val meta = rs.metaData
+                            val columns = (1..meta.columnCount).map { meta.getColumnName(it) }
+                            val rows = mutableListOf<List<Any?>>()
+                            while (rs.next()) {
+                                rows += (1..meta.columnCount).map { rs.getObject(it) }
+                            }
+                            val count = rows.size.toLong()
+                            logs += "[PREVIEW] '${node.label}': ${count}행 (INSERT 미실행)"
+                            NodeResult(
+                                node.id, node.type.name, ExecutionStatus.SUCCESS,
+                                rowsProcessed = count,
+                                durationMs = System.currentTimeMillis() - startMs,
+                                generatedSql = query.sql,
+                                rowSamples = LogRowData(columns, rows)
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                NodeResult(node.id, node.type.name, ExecutionStatus.FAILED,
+                    durationMs = System.currentTimeMillis() - startMs,
+                    errorMessage = e.message)
+            }
         }
 
         return try {
@@ -711,59 +741,51 @@ class SqlPushdownAdapter(
 
     // ── T_LOG_ROW: upstream CTE 체인 실행 후 샘플 rows 캡처 ─────────
 
+    // T_LOG_ROW는 Talend 규칙상 ROW 출력 1개만 허용.
+    // 항상 downstream OUTPUT 노드의 매핑을 반영한 변환 후 데이터를 캡처합니다.
     private fun executeLogRowNode(
         node: NodeIR, plan: ExecutionPlan,
         logs: MutableList<String>, startMs: Long
     ): NodeResult {
         return try {
-            // 이 T_LOG_ROW 노드에서 나가는 ROW 엣지의 downstream OUTPUT 노드 목록
-            val downstreamOutputs = plan.ir.edges
+            // T_LOG_ROW → downstream ROW 엣지로 연결된 직접/간접 OUTPUT 노드
+            val downstreamOutput = plan.ir.edges
                 .filter { it.source == node.id && it.linkType == com.platform.etl.ir.LinkType.ROW }
                 .mapNotNull { edge -> plan.ir.nodes.find { it.id == edge.target } }
-                .filter { it.type == com.platform.etl.ir.ComponentType.T_JDBC_OUTPUT }
+                .firstOrNull { it.type == com.platform.etl.ir.ComponentType.T_JDBC_OUTPUT }
 
-            if (downstreamOutputs.size > 1) {
-                // 다중 OUTPUT — 각 테이블별로 downstream 변환 포함 경로를 컴파일하여 캡처
-                val tableRowSamples = mutableMapOf<String, LogRowData>()
-                var totalCount = 0L
+            if (downstreamOutput != null) {
+                // downstream OUTPUT이 있으면: 해당 output의 매핑이 적용된 변환 후 데이터 캡처
+                val query = compiler.compileForLogRowDownstream(plan, node, downstreamOutput)
+                val conn = connectionService.get(query.connectionId)
+                val jdbcUrl = connectionService.buildJdbcUrl(conn)
+                val password = connectionService.getDecryptedPassword(conn.id)
 
-                for (outputNode in downstreamOutputs) {
-                    val baseName = outputNode.config["tableName"]?.toString() ?: outputNode.label
-                    val query = compiler.compileForLogRowDownstream(plan, node, outputNode)
-                    val conn     = connectionService.get(query.connectionId)
-                    // 탭 key: 테이블명 기준, 중복 시 label로 구분
-                    val tableName = if (tableRowSamples.containsKey(baseName)) "${outputNode.label}:$baseName" else baseName
-                    val jdbcUrl  = connectionService.buildJdbcUrl(conn)
-                    val password = connectionService.getDecryptedPassword(conn.id)
-
-                    DriverManager.getConnection(jdbcUrl, conn.username, password).use { jdbc ->
-                        jdbc.createStatement().use { stmt ->
-                            stmt.executeQuery(query.sql).use { rs ->
-                                val meta = rs.metaData
-                                val columns = (1..meta.columnCount).map { meta.getColumnName(it) }
-                                val rows = mutableListOf<List<Any?>>()
-                                while (rs.next()) {
-                                    rows += (1..meta.columnCount).map { rs.getObject(it) }
-                                }
-                                tableRowSamples[tableName] = LogRowData(columns, rows)
-                                totalCount = maxOf(totalCount, rows.size.toLong())
-                                logs += "[LOG] '${node.label}' → '$tableName': ${rows.size}행 캡처"
+                DriverManager.getConnection(jdbcUrl, conn.username, password).use { jdbc ->
+                    jdbc.createStatement().use { stmt ->
+                        stmt.executeQuery(query.sql).use { rs ->
+                            val meta = rs.metaData
+                            val columns = (1..meta.columnCount).map { meta.getColumnName(it) }
+                            val rows = mutableListOf<List<Any?>>()
+                            while (rs.next()) {
+                                rows += (1..meta.columnCount).map { rs.getObject(it) }
                             }
+                            val count = rows.size.toLong()
+                            logs += "[LOG] '${node.label}' → '${downstreamOutput.label}': ${count}행 캡처"
+                            NodeResult(
+                                node.id, node.type.name, ExecutionStatus.SUCCESS,
+                                rowsProcessed = count,
+                                durationMs = System.currentTimeMillis() - startMs,
+                                rowSamples = LogRowData(columns, rows)
+                            )
                         }
                     }
                 }
-
-                NodeResult(
-                    node.id, node.type.name, ExecutionStatus.SUCCESS,
-                    rowsProcessed = totalCount,
-                    durationMs = System.currentTimeMillis() - startMs,
-                    tableRowSamples = tableRowSamples
-                )
             } else {
-                // 단일 OUTPUT (또는 OUTPUT 없음) — 기존 방식: T_LOG_ROW upstream 데이터 캡처
+                // OUTPUT 없음 (파이프라인 말단에 T_LOG_ROW) — upstream 데이터 캡처
                 val query = compiler.compileForLogRow(plan, node)
-                val conn     = connectionService.get(query.connectionId)
-                val jdbcUrl  = connectionService.buildJdbcUrl(conn)
+                val conn = connectionService.get(query.connectionId)
+                val jdbcUrl = connectionService.buildJdbcUrl(conn)
                 val password = connectionService.getDecryptedPassword(conn.id)
 
                 DriverManager.getConnection(jdbcUrl, conn.username, password).use { jdbc ->
