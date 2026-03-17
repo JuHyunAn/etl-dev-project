@@ -1,6 +1,7 @@
 import React, { useRef, useState, useCallback } from "react";
 import type { ColumnInfo } from "../../types";
 import { SNIPPETS, SNIPPET_CATEGORIES, applySnippet } from "../../utils/expressionSnippets";
+import { useDraggableResizable, RESIZE_CURSORS } from "../../utils/useDraggableResizable";
 
 interface SourceGroup {
   nodeId: string;
@@ -34,6 +35,10 @@ export default function ExpressionBuilderPopup({
   const [activeCategory, setActiveCategory] = useState<string>(SNIPPET_CATEGORIES[0]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cursorRef = useRef<{ start: number; end: number }>({ start: initialExpression.length, end: initialExpression.length });
+
+  const initW = Math.round(window.innerWidth  * 0.48);
+  const initH = Math.round(window.innerHeight * 0.48);
+  const { size, pos, onDragStart, onResizeStart } = useDraggableResizable(initW, initH, 480, 320);
 
   // textarea 커서 위치 저장
   const handleTextareaSelect = () => {
@@ -88,20 +93,46 @@ export default function ExpressionBuilderPopup({
     Null:   "#dc2626",
   };
 
+  const resizeHandles: { dir: string; style: React.CSSProperties }[] = [
+    { dir: "n",  style: { top: 0, left: 4, right: 4, height: 4, cursor: RESIZE_CURSORS.n } },
+    { dir: "s",  style: { bottom: 0, left: 4, right: 4, height: 4, cursor: RESIZE_CURSORS.s } },
+    { dir: "e",  style: { right: 0, top: 4, bottom: 4, width: 4, cursor: RESIZE_CURSORS.e } },
+    { dir: "w",  style: { left: 0, top: 4, bottom: 4, width: 4, cursor: RESIZE_CURSORS.w } },
+    { dir: "ne", style: { top: 0, right: 0, width: 8, height: 8, cursor: RESIZE_CURSORS.ne } },
+    { dir: "nw", style: { top: 0, left: 0, width: 8, height: 8, cursor: RESIZE_CURSORS.nw } },
+    { dir: "se", style: { bottom: 0, right: 0, width: 8, height: 8, cursor: RESIZE_CURSORS.se } },
+    { dir: "sw", style: { bottom: 0, left: 0, width: 8, height: 8, cursor: RESIZE_CURSORS.sw } },
+  ];
+
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center">
+    <div className="fixed inset-0 z-[60]">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
 
       {/* Popup */}
       <div
-        className="relative flex flex-col rounded-xl shadow-2xl overflow-hidden"
-        style={{ width: "55vw", height: "55vh", background: "#f8fafc", border: "1px solid #e2e8f0" }}
+        className="absolute flex flex-col rounded-xl shadow-2xl overflow-hidden"
+        style={{
+          left: pos.x, top: pos.y,
+          width: size.width, height: size.height,
+          background: "#f8fafc", border: "1px solid #e2e8f0",
+        }}
       >
+        {/* 리사이즈 핸들 */}
+        {resizeHandles.map(({ dir, style }) => (
+          <div
+            key={dir}
+            className="absolute z-10"
+            style={style}
+            onMouseDown={e => onResizeStart(e, dir)}
+          />
+        ))}
+
         {/* ── Header ── */}
         <div
-          className="flex items-center justify-between px-4 py-2.5 flex-shrink-0"
-          style={{ background: "#f1f5f9", borderBottom: "1px solid #e2e8f0" }}
+          className="flex items-center justify-between px-4 py-2.5 flex-shrink-0 select-none"
+          style={{ background: "#f1f5f9", borderBottom: "1px solid #e2e8f0", cursor: "move" }}
+          onMouseDown={onDragStart}
         >
           <div className="flex items-center gap-2">
             <div className="w-5 h-5 rounded flex items-center justify-center" style={{ background: "#388bfd22" }}>

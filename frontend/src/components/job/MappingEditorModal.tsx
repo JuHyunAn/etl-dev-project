@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback, useLayoutEffect } from "react";
+import { useDraggableResizable, RESIZE_CURSORS } from "../../utils/useDraggableResizable";
 import { schemaApi } from "../../api";
 import { Spinner } from "../ui";
 import type { Node, Edge } from "@xyflow/react";
@@ -712,17 +713,43 @@ export default function MappingEditorModal({
     setDraggedSource(null);
   };
 
+  const initW = Math.round(window.innerWidth  * 0.55);
+  const initH = Math.round(window.innerHeight * 0.68);
+  const { size: mSize, pos: mPos, onDragStart: mDragStart, onResizeStart: mResizeStart } =
+    useDraggableResizable(initW, initH, 520, 380);
+
+  const resizeHandles: { dir: string; style: React.CSSProperties }[] = [
+    { dir: "n",  style: { top: 0, left: 4, right: 4, height: 4, cursor: RESIZE_CURSORS.n } },
+    { dir: "s",  style: { bottom: 0, left: 4, right: 4, height: 4, cursor: RESIZE_CURSORS.s } },
+    { dir: "e",  style: { right: 0, top: 4, bottom: 4, width: 4, cursor: RESIZE_CURSORS.e } },
+    { dir: "w",  style: { left: 0, top: 4, bottom: 4, width: 4, cursor: RESIZE_CURSORS.w } },
+    { dir: "ne", style: { top: 0, right: 0, width: 8, height: 8, cursor: RESIZE_CURSORS.ne } },
+    { dir: "nw", style: { top: 0, left: 0, width: 8, height: 8, cursor: RESIZE_CURSORS.nw } },
+    { dir: "se", style: { bottom: 0, right: 0, width: 8, height: 8, cursor: RESIZE_CURSORS.se } },
+    { dir: "sw", style: { bottom: 0, left: 0, width: 8, height: 8, cursor: RESIZE_CURSORS.sw } },
+  ];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
+    <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
       <div
-        className="relative w-[50vw] h-[65vh] rounded-xl shadow-2xl flex flex-col overflow-hidden"
-        style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}
+        className="absolute rounded-xl shadow-2xl flex flex-col overflow-hidden"
+        style={{
+          left: mPos.x, top: mPos.y,
+          width: mSize.width, height: mSize.height,
+          background: "#f8fafc", border: "1px solid #e2e8f0",
+        }}
       >
+        {/* 리사이즈 핸들 */}
+        {resizeHandles.map(({ dir, style }) => (
+          <div key={dir} className="absolute z-10" style={style} onMouseDown={e => mResizeStart(e, dir)} />
+        ))}
+
         {/* ── Header ── */}
         <div
-          className="flex items-center justify-between px-4 py-2.5 flex-shrink-0"
-          style={{ background: "#f1f5f9", borderBottom: "1px solid #e2e8f0" }}
+          className="flex items-center justify-between px-4 py-2.5 flex-shrink-0 select-none"
+          style={{ background: "#f1f5f9", borderBottom: "1px solid #e2e8f0", cursor: "move" }}
+          onMouseDown={mDragStart}
         >
           <div className="flex items-center gap-3">
             <div className="w-6 h-6 rounded flex items-center justify-center" style={{ background: "#388bfd22" }}>

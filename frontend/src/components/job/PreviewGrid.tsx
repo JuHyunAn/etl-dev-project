@@ -26,11 +26,11 @@ export default function PreviewGrid({
   onOutputChange,
 }: Props) {
   return (
-    <div className="flex flex-col h-full overflow-hidden" style={{ background: '#282C34' }}>
+    <div className="flex flex-col h-full overflow-hidden" style={{ background: '#1E1E1E' }}>
       {/* 헤더 */}
       <div
         className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5"
-        style={{ borderBottom: '1px solid #21262d', background: '#282C34' }}
+        style={{ borderBottom: '1px solid #21262d', background: '#1E1E1E' }}
       >
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: '#6366f1' }}>
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -156,11 +156,11 @@ export default function PreviewGrid({
 
         {result && !result.error && !loading && (
           <table className="w-full text-[11px] font-mono border-collapse" style={{ tableLayout: 'auto' }}>
-            <thead className="sticky top-0 z-10" style={{ background: '#282C34' }}>
+            <thead className="sticky top-0 z-10" style={{ background: '#1E1E1E' }}>
               <tr>
                 <th
                   className="px-2 py-1.5 text-left font-medium text-[10px]"
-                  style={{ color: '#484f58', borderBottom: '1px solid #21262d', borderRight: '1px solid #21262d', width: 40, minWidth: 40 }}
+                  style={{ color: '#484f58', borderBottom: '1px solid #30363d', borderRight: '1px solid #30363d', width: 40, minWidth: 40 }}
                 >
                   #
                 </th>
@@ -168,7 +168,7 @@ export default function PreviewGrid({
                   <th
                     key={col}
                     className="px-3 py-1.5 text-left font-medium text-[10px] whitespace-nowrap"
-                    style={{ color: '#8b949e', borderBottom: '1px solid #21262d', borderRight: '1px solid #21262d' }}
+                    style={{ color: '#8b949e', borderBottom: '1px solid #30363d', borderRight: '1px solid #30363d' }}
                   >
                     {col}
                   </th>
@@ -190,13 +190,13 @@ export default function PreviewGrid({
                 result.rows.map((row, ri) => (
                   <tr
                     key={ri}
-                    style={{ background: ri % 2 === 0 ? '#282C34' : '#1e2632' }}
+                    style={{ background: ri % 2 === 0 ? '#1E1E1E' : '#161b22' }}
                     onMouseEnter={e => (e.currentTarget.style.background = '#2a3547')}
-                    onMouseLeave={e => (e.currentTarget.style.background = ri % 2 === 0 ? '#282C34' : '#1e2632')}
+                    onMouseLeave={e => (e.currentTarget.style.background = ri % 2 === 0 ? '#1E1E1E' : '#161b22')}
                   >
                     <td
                       className="px-2 py-1 text-center"
-                      style={{ color: '#484f58', borderBottom: '1px solid #21262d', borderRight: '1px solid #21262d', minWidth: 40 }}
+                      style={{ color: '#484f58', borderBottom: '1px solid #30363d', borderRight: '1px solid #30363d', minWidth: 40 }}
                     >
                       {ri + 1}
                     </td>
@@ -206,8 +206,8 @@ export default function PreviewGrid({
                         className="px-3 py-1 whitespace-nowrap"
                         style={{
                           color: cell === null ? '#484f58' : typeof cell === 'number' ? '#79c0ff' : typeof cell === 'boolean' ? '#56d364' : '#c9d1d9',
-                          borderBottom: '1px solid #21262d',
-                          borderRight: '1px solid #21262d',
+                          borderBottom: '1px solid #30363d',
+                          borderRight: '1px solid #30363d',
                           fontStyle: cell === null ? 'italic' : 'normal',
                           maxWidth: 240,
                           overflow: 'hidden',

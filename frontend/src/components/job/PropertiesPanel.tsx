@@ -489,13 +489,13 @@ function JdbcOutputConfig({ config, onChange }: {
         </div>
       )}
 
-      <div className="flex items-center gap-2">
+      {/* <div className="flex items-center gap-2">
         <input type="checkbox" id="truncate"
           checked={(config.truncateBeforeInsert as boolean) ?? false}
           onChange={e => onChange('truncateBeforeInsert', e.target.checked)}
           className="w-3.5 h-3.5 accent-[#2563eb]" />
         <label htmlFor="truncate" className="text-xs text-[#64748b]">Truncate before insert</label>
-      </div>
+      </div> */}
 
       {showPicker && connId && selectedConn && (
         <TablePickerModal

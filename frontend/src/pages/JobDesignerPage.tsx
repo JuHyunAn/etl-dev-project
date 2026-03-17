@@ -2016,24 +2016,24 @@ export default function JobDesignerPage() {
           {/* Bottom Panel */}
           {bottomPanel && (
             <div
-              className="flex-shrink-0 bg-[#282C34] border-t border-[#21262d] flex flex-col"
+              className="flex-shrink-0 bg-[#0D1117] border-t border-[#21262d] flex flex-col"
               style={{ height: bottomPanelHeight }}
             >
               {/* 상단 리사이즈 핸들 */}
               <div
                 onMouseDown={handleBottomPanelResizeStart}
                 className="h-1.5 flex-shrink-0 cursor-ns-resize group flex items-center justify-center"
-                style={{ background: "#0D1C29" }}
+                style={{ background: "#0D1117" }}
               >
                 <div className="w-8 h-0.5 rounded-full bg-[#30363d] group-hover:bg-[#58a6ff] transition-colors" />
               </div>
-              <div className="flex items-center gap-1 px-4 border-b border-[#21262d] flex-shrink-0" style={{ background: "#0D1C29" }}>
+              <div className="flex items-center gap-1 px-4 border-b border-[#21262d] flex-shrink-0" style={{ background: "#0D1117" }}>
                 <button
                   onClick={() => setBottomPanel("sql")}
                   className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
                     ${
                       bottomPanel === "sql"
-                        ? "border-[#3fb950] text-[#3fb950]"
+                        ? "border-[#e6edf3] text-[#e6edf3]"
                         : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
                     }`}
                 >
@@ -2044,7 +2044,7 @@ export default function JobDesignerPage() {
                   className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
                     ${
                       bottomPanel === "logs"
-                        ? "border-[#58a6ff] text-[#58a6ff]"
+                        ? "border-[#e6edf3] text-[#e6edf3]"
                         : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
                     }`}
                 >
@@ -2069,7 +2069,7 @@ export default function JobDesignerPage() {
                   className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
                     ${
                       bottomPanel === "rowlogs"
-                        ? "border-[#f0883e] text-[#f0883e]"
+                        ? "border-[#e6edf3] text-[#e6edf3]"
                         : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
                     }`}
                 >
@@ -2092,7 +2092,7 @@ export default function JobDesignerPage() {
                   className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
                     ${
                       bottomPanel === "preview"
-                        ? "border-[#6366f1] text-[#6366f1]"
+                        ? "border-[#e6edf3] text-[#e6edf3]"
                         : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
                     }`}
                 >
@@ -2108,7 +2108,7 @@ export default function JobDesignerPage() {
                   className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
                     ${
                       bottomPanel === "summary"
-                        ? "border-[#bc8cff] text-[#bc8cff]"
+                        ? "border-[#e6edf3] text-[#e6edf3]"
                         : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
                     }`}
                 >
@@ -2119,7 +2119,7 @@ export default function JobDesignerPage() {
                   className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
                     ${
                       bottomPanel === "schedule"
-                        ? "border-[#f59e0b] text-[#f59e0b]"
+                        ? "border-[#e6edf3] text-[#e6edf3]"
                         : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
                     }`}
                 >
@@ -2166,7 +2166,7 @@ export default function JobDesignerPage() {
               )}
 
               {bottomPanel === "summary" && (
-                <div className="flex-1 overflow-y-auto p-4">
+                <div className="flex-1 overflow-y-auto p-4" style={{ background: "#1E1E1E" }}>
                   {nodes.length === 0 ? (
                     <p className="text-xs text-[#484f58]">
                       캔버스에 노드가 없습니다.
@@ -2289,7 +2289,7 @@ export default function JobDesignerPage() {
               )}
 
               {bottomPanel === "logs" && (
-                <div className="flex-1 overflow-y-auto p-4 font-mono text-xs" style={{ background: "#282C34" }}>
+                <div className="flex-1 overflow-y-auto p-4 font-mono text-xs" style={{ background: "#1E1E1E" }}>
                   {running && (
                     <div className="flex items-center gap-2 text-[#58a6ff] mb-2">
                       <Spinner size="sm" />
@@ -2383,7 +2383,7 @@ export default function JobDesignerPage() {
                   const renderGrid = (data: { columns: string[]; rows: (string | number | boolean | null)[][] }) => (
                     <div className="flex-1 overflow-auto">
                       <table className="text-[11px] font-mono w-max min-w-full border-collapse">
-                        <thead className="sticky top-0 z-10" style={{ background: "#282C34" }}>
+                        <thead className="sticky top-0 z-10" style={{ background: "#1E1E1E" }}>
                           <tr>
                             <th className="px-2 py-1.5 text-left text-[#484f58] font-medium border-r border-b border-[#21262d] w-8">#</th>
                             {data.columns.map((col) => (
@@ -2397,7 +2397,7 @@ export default function JobDesignerPage() {
                           {data.rows.map((row, ri) => (
                             <tr
                               key={ri}
-                              style={{ background: ri % 2 === 0 ? "#282C34" : "#1e2632" }}
+                              style={{ background: ri % 2 === 0 ? "#0D1117" : "#161b22" }}
                               className="hover:bg-[#2a3547] transition-colors"
                             >
                               <td className="px-2 py-1 text-[#484f58] border-r border-[#21262d] text-center">{ri + 1}</td>
@@ -2421,7 +2421,7 @@ export default function JobDesignerPage() {
                   );
 
                   return (
-                    <div className="flex-1 flex flex-col overflow-hidden">
+                    <div className="flex-1 flex flex-col overflow-hidden" style={{ background: "#1E1E1E" }}>
                       {running && (
                         <div className="flex items-center gap-2 text-[#58a6ff] p-4 text-xs font-mono">
                           <Spinner size="sm" />
@@ -2471,7 +2471,7 @@ export default function JobDesignerPage() {
 
                           {/* 테이블 서브탭 (tableRowSamples인 경우) */}
                           {tableKeys && tableKeys.length > 1 && (
-                            <div className="flex items-center gap-1 px-3 pt-1 pb-0 border-b border-[#21262d] flex-shrink-0" style={{ background: "#282C34" }}>
+                            <div className="flex items-center gap-1 px-3 pt-1 pb-0 border-b border-[#21262d] flex-shrink-0" style={{ background: "#1E1E1E" }}>
                               {tableKeys.map((tKey) => {
                                 const tData = activeResult!.tableRowSamples![tKey];
                                 return (
@@ -2517,7 +2517,7 @@ export default function JobDesignerPage() {
                   ? (nodes.find(n => n.id === previewOutputNodeId)?.data as EtlNodeData)?.label
                   : undefined;
                 return (
-                  <div className="flex-1 overflow-hidden">
+                  <div className="flex-1 overflow-hidden" style={{ background: "#1E1E1E" }}>
                     <PreviewGrid
                       nodeLabel={previewNodeLabel}
                       outputLabel={outputLabel}
@@ -2534,7 +2534,9 @@ export default function JobDesignerPage() {
               })()}
 
               {bottomPanel === "schedule" && (
-                <SchedulePanel jobId={jobId ?? ""} />
+                <div className="flex-1 overflow-hidden" style={{ background: "#1E1E1E" }}>
+                  <SchedulePanel jobId={jobId ?? ""} />
+                </div>
               )}
             </div>
           )}
@@ -2590,14 +2592,26 @@ export default function JobDesignerPage() {
           <button
             onClick={() => setAiPanelOpen((p) => !p)}
             title={aiPanelOpen ? "AI Agent 닫기" : "AI Agent 열기"}
-            className={`absolute z-10 top-[25%] -translate-y-1/2
-              flex items-center justify-center
-              rounded-l-xl border border-r-0 transition-all duration-300 ease-in-out shadow-lg
-              ${
-                aiPanelOpen
-                  ? "-left-3 w-3 h-16 bg-[#e0e7ff] border-[#6366f1] hover:bg-[#c7d2fe]"
-                  : "-left-6 w-6 h-16 bg-[#faf5ff] border-[#d8b4fe] text-[#7c3aed] hover:bg-[#f3e8ff] hover:border-[#a855f7] hover:shadow-[0_0_12px_rgba(124,58,237,0.2)]"
-              }`}
+            className="absolute z-10 top-[25%] -translate-y-1/2 flex items-center justify-center transition-all duration-300 ease-in-out"
+            style={aiPanelOpen ? {
+              left: -8,
+              width: 8,
+              height: 40,
+              background: "#e0e7ff",
+              border: "1px solid #6366f1",
+              borderRight: "none",
+              borderRadius: "6px 0 0 6px",
+              boxShadow: "none",
+            } : {
+              left: -44,
+              width: 44,
+              height: 44,
+              background: "#faf5ff",
+              border: "1px solid #d8b4fe",
+              borderRight: "none",
+              borderRadius: "10px 0 0 10px",
+              boxShadow: "-2px 2px 8px rgba(124,58,237,0.12)",
+            }}
           >
             {!aiPanelOpen && (
               <img
@@ -2858,7 +2872,7 @@ function SchedulePanel({ jobId }: { jobId: string }) {
   };
 
   return (
-    <div className="h-full overflow-y-auto px-4 py-3" style={{ background: "#282C34", color: "#c9d1d9" }}>
+    <div className="h-full overflow-y-auto px-4 py-3" style={{ background: "#1E1E1E", color: "#c9d1d9" }}>
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#8b949e" }}>
           이 Job의 워크플로우 ({schedules.length})
