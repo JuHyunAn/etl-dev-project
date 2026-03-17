@@ -156,11 +156,11 @@ class ExecutionService(
     ): PreviewNodeResult {
         val job = jobService.get(jobId)
         val ir = objectMapper.readValue(job.irJson ?: "{}", com.platform.etl.ir.JobIR::class.java)
-        val plan = buildPlan(jobId, ir, context, previewMode = true)
+        val plan = sqlPushdownAdapter.resolvePlan(buildPlan(jobId, ir, context, previewMode = true))
 
-        val targetNode = ir.nodes.find { it.id == nodeId }
+        val targetNode = plan.ir.nodes.find { it.id == nodeId }
             ?: return PreviewNodeResult(error = "노드 '$nodeId'를 찾을 수 없습니다")
-        val outputNode = outputNodeId?.let { oid -> ir.nodes.find { it.id == oid } }
+        val outputNode = outputNodeId?.let { oid -> plan.ir.nodes.find { it.id == oid } }
 
         return try {
             val query = sqlPushdownAdapter.compiler.compileForNodePreview(plan, targetNode, outputNode)

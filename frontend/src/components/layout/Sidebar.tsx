@@ -235,7 +235,7 @@ export default function Sidebar() {
               style={
                 isActive
                   ? {
-                      background: "#232B37",
+                      background: "#0D1C29",
                       color: "#f6f6f6",
                       fontWeight: "bold",
                     }
@@ -243,7 +243,7 @@ export default function Sidebar() {
               }
               onMouseEnter={(e) => {
                 if (!isActive) {
-                  (e.currentTarget as HTMLElement).style.background = "#232B37";
+                  (e.currentTarget as HTMLElement).style.background = "#0D1C29";
                   (e.currentTarget as HTMLElement).style.color = "#f6f6f6";
                 }
               }}
@@ -308,12 +308,12 @@ export default function Sidebar() {
             <a
               href="/login"
               className="flex items-center justify-center w-full py-1.5 rounded-md text-xs font-medium transition-colors"
-              style={{ background: "#232B37", color: "#f6f6f6" }}
+              style={{ background: "#0D1C29", color: "#f6f6f6" }}
               onMouseEnter={(e) =>
                 ((e.currentTarget as HTMLElement).style.background = "#1a1f2a")
               }
               onMouseLeave={(e) =>
-                ((e.currentTarget as HTMLElement).style.background = "#232B37")
+                ((e.currentTarget as HTMLElement).style.background = "#0D1C29")
               }
             >
               로그인 / 회원가입
@@ -391,12 +391,12 @@ export default function Sidebar() {
             <a
               href="/login"
               className="flex items-center justify-center w-full py-1.5 rounded-md text-xs font-medium transition-colors"
-              style={{ background: "#232B37", color: "#f6f6f6" }}
+              style={{ background: "#0D1C29", color: "#f6f6f6" }}
               onMouseEnter={(e) =>
                 ((e.currentTarget as HTMLElement).style.background = "#1a1f2a")
               }
               onMouseLeave={(e) =>
-                ((e.currentTarget as HTMLElement).style.background = "#232B37")
+                ((e.currentTarget as HTMLElement).style.background = "#0D1C29")
               }
             >
               로그인 / 회원가입

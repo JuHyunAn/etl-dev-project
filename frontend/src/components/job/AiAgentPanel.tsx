@@ -683,10 +683,10 @@ export default function AiAgentPanel({
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center -mt-16">
             <div
-              className="w-10 h-10 rounded-xl mx-auto mb-3 flex items-center justify-center"
+              className="w-10 h-10 rounded-xl mx-auto mb-3 flex items-center justify-center p-2"
               style={{ backgroundColor: `${PROVIDER_COLORS[provider]}22` }}
             >
-              <img src="/ai.png" alt="AI" className="w-6 h-6 object-contain" />
+              <img src="/ai.png" alt="AI" className="w-full h-full object-contain" />
             </div>
             <p className="text-[14px] font-medium text-[#64748b]">
               ETL 파이프라인을 설명해주세요

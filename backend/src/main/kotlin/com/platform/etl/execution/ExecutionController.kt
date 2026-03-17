@@ -12,7 +12,7 @@ data class RunRequest(
 )
 
 data class PreviewNodeRequest(
-    val nodeId: String,
+    val nodeId: String = "",
     val outputNodeId: String? = null,
     val context: Map<String, String> = emptyMap()
 )

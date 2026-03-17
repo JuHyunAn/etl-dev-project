@@ -93,14 +93,14 @@ export default function AppLayout() {
         <div
           className="h-[2px] flex-shrink-0"
           style={{
-            background: "#232B37",
+            background: "#0D1C29",
           }}
         />
 
         {/* Top Bar */}
         <header
           className="h-11 flex-shrink-0 flex items-center px-5 gap-4"
-          style={{ background: "#232B37", borderBottom: "1px solid #232B37" }}
+          style={{ background: "#0D1C29", borderBottom: "1px solid #0D1C29" }}
         >
           <Breadcrumb />
           <div className="ml-auto flex items-center gap-2">

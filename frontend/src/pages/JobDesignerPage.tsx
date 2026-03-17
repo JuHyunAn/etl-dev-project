@@ -1270,7 +1270,7 @@ export default function JobDesignerPage() {
   };
 
   const handlePreviewNode = async (nodeId: string, outputNodeId?: string) => {
-    if (!jobId || !projectId) return;
+    if (!jobId || !projectId || !nodeId) return;
     setPreviewNodeId(nodeId);
     setPreviewOutputNodeId(outputNodeId ?? null);
     setPreviewResult(null);
@@ -1291,6 +1291,13 @@ export default function JobDesignerPage() {
       setPreviewLoading(false);
     }
   };
+
+  // 노드 선택 변경 시 프리뷰 패널이 열려있으면 자동 새로고침
+  useEffect(() => {
+    if (bottomPanel === "preview" && selectedNode?.id) {
+      handlePreviewNode(selectedNode.id);
+    }
+  }, [selectedNode?.id]);
 
   const sqlPreview = useMemo(() => {
     if (nodes.length === 0) {
@@ -1389,7 +1396,7 @@ export default function JobDesignerPage() {
       {/* Toolbar */}
       <div
         className="flex items-center gap-3 px-4 py-2.5 flex-shrink-0"
-        style={{ background: "#232b37", borderBottom: "1px solid #232b37" }}
+        style={{ background: "#0D1C29", borderBottom: "1px solid #232b37" }}
       >
         <button
           onClick={() => isDirty ? setShowLeaveConfirm(true) : navigate(`/projects/${projectId}`)}
@@ -1720,6 +1727,7 @@ export default function JobDesignerPage() {
                   return "#2563eb";
                 }}
                 maskColor="rgba(240,244,248,0.8)"
+                style={{ width: 180, height: 130 }}
               />
             </ReactFlow>
 
@@ -2008,17 +2016,18 @@ export default function JobDesignerPage() {
           {/* Bottom Panel */}
           {bottomPanel && (
             <div
-              className="flex-shrink-0 bg-[#232b37] border-t border-[#21262d] flex flex-col"
+              className="flex-shrink-0 bg-[#282C34] border-t border-[#21262d] flex flex-col"
               style={{ height: bottomPanelHeight }}
             >
               {/* 상단 리사이즈 핸들 */}
               <div
                 onMouseDown={handleBottomPanelResizeStart}
                 className="h-1.5 flex-shrink-0 cursor-ns-resize group flex items-center justify-center"
+                style={{ background: "#0D1C29" }}
               >
                 <div className="w-8 h-0.5 rounded-full bg-[#30363d] group-hover:bg-[#58a6ff] transition-colors" />
               </div>
-              <div className="flex items-center gap-1 px-4 border-b border-[#21262d] flex-shrink-0">
+              <div className="flex items-center gap-1 px-4 border-b border-[#21262d] flex-shrink-0" style={{ background: "#0D1C29" }}>
                 <button
                   onClick={() => setBottomPanel("sql")}
                   className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
@@ -2064,7 +2073,7 @@ export default function JobDesignerPage() {
                         : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
                     }`}
                 >
-                  Row Logs
+                   Runtime Data
                   {executionResult &&
                     Object.values(executionResult.nodeResults).some(
                       (r) => r.rowSamples,
@@ -2077,17 +2086,6 @@ export default function JobDesignerPage() {
                         }
                       </span>
                     )}
-                </button>
-                <button
-                  onClick={() => setBottomPanel("summary")}
-                  className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
-                    ${
-                      bottomPanel === "summary"
-                        ? "border-[#bc8cff] text-[#bc8cff]"
-                        : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
-                    }`}
-                >
-                  Job Summary
                 </button>
                 <button
                   onClick={() => setBottomPanel("preview")}
@@ -2104,6 +2102,17 @@ export default function JobDesignerPage() {
                       {previewResult.rowCount}
                     </span>
                   )}
+                </button>
+                <button
+                  onClick={() => setBottomPanel("summary")}
+                  className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors
+                    ${
+                      bottomPanel === "summary"
+                        ? "border-[#bc8cff] text-[#bc8cff]"
+                        : "border-transparent text-[#8b949e] hover:text-[#e6edf3]"
+                    }`}
+                >
+                  Job Summary
                 </button>
                 <button
                   onClick={() => setBottomPanel("schedule")}
@@ -2190,7 +2199,7 @@ export default function JobDesignerPage() {
                         ].map((s) => (
                           <div
                             key={s.label}
-                            className="px-3 py-2 rounded-lg bg-[#1a2233] border border-[#21262d] flex items-center gap-2"
+                            className="px-3 py-2 rounded-lg bg-[#282C34] border border-[#4a5568] flex items-center gap-2"
                           >
                             <span
                               className="text-lg font-bold"
@@ -2206,7 +2215,7 @@ export default function JobDesignerPage() {
                       </div>
 
                       {/* 데이터 흐름 */}
-                      <div className="col-span-2 bg-[#1a2233] border border-[#21262d] rounded-lg p-3 overflow-y-auto">
+                      <div className="col-span-2 bg-[#282C34] border border-[#4a5568] rounded-lg p-3 overflow-y-auto">
                         <p className="text-[10px] font-semibold text-[#484f58] uppercase tracking-wider mb-2">
                           데이터 흐름
                         </p>
@@ -2249,7 +2258,7 @@ export default function JobDesignerPage() {
                       </div>
 
                       {/* 컴포넌트 목록 */}
-                      <div className="col-span-2 bg-[#1a2233] border border-[#21262d] rounded-lg p-3 overflow-y-auto">
+                      <div className="col-span-2 bg-[#282C34] border border-[#4a5568] rounded-lg p-3 overflow-y-auto">
                         <p className="text-[10px] font-semibold text-[#484f58] uppercase tracking-wider mb-2">
                           컴포넌트 구성
                         </p>
@@ -2280,7 +2289,7 @@ export default function JobDesignerPage() {
               )}
 
               {bottomPanel === "logs" && (
-                <div className="flex-1 overflow-y-auto p-4 font-mono text-xs">
+                <div className="flex-1 overflow-y-auto p-4 font-mono text-xs" style={{ background: "#282C34" }}>
                   {running && (
                     <div className="flex items-center gap-2 text-[#58a6ff] mb-2">
                       <Spinner size="sm" />
@@ -2374,7 +2383,7 @@ export default function JobDesignerPage() {
                   const renderGrid = (data: { columns: string[]; rows: (string | number | boolean | null)[][] }) => (
                     <div className="flex-1 overflow-auto">
                       <table className="text-[11px] font-mono w-max min-w-full border-collapse">
-                        <thead className="sticky top-0 z-10" style={{ background: "#1a2233" }}>
+                        <thead className="sticky top-0 z-10" style={{ background: "#282C34" }}>
                           <tr>
                             <th className="px-2 py-1.5 text-left text-[#484f58] font-medium border-r border-b border-[#21262d] w-8">#</th>
                             {data.columns.map((col) => (
@@ -2388,7 +2397,7 @@ export default function JobDesignerPage() {
                           {data.rows.map((row, ri) => (
                             <tr
                               key={ri}
-                              style={{ background: ri % 2 === 0 ? "#232b37" : "#1e2632" }}
+                              style={{ background: ri % 2 === 0 ? "#282C34" : "#1e2632" }}
                               className="hover:bg-[#2a3547] transition-colors"
                             >
                               <td className="px-2 py-1 text-[#484f58] border-r border-[#21262d] text-center">{ri + 1}</td>
@@ -2462,7 +2471,7 @@ export default function JobDesignerPage() {
 
                           {/* 테이블 서브탭 (tableRowSamples인 경우) */}
                           {tableKeys && tableKeys.length > 1 && (
-                            <div className="flex items-center gap-1 px-3 pt-1 pb-0 border-b border-[#21262d] flex-shrink-0" style={{ background: "#161b22" }}>
+                            <div className="flex items-center gap-1 px-3 pt-1 pb-0 border-b border-[#21262d] flex-shrink-0" style={{ background: "#282C34" }}>
                               {tableKeys.map((tKey) => {
                                 const tData = activeResult!.tableRowSamples![tKey];
                                 return (
@@ -2508,16 +2517,17 @@ export default function JobDesignerPage() {
                   ? (nodes.find(n => n.id === previewOutputNodeId)?.data as EtlNodeData)?.label
                   : undefined;
                 return (
-                  <div className="flex-1 overflow-hidden bg-white">
+                  <div className="flex-1 overflow-hidden">
                     <PreviewGrid
                       nodeLabel={previewNodeLabel}
                       outputLabel={outputLabel}
                       result={previewResult}
                       loading={previewLoading}
-                      onRefresh={() => handlePreviewNode(previewNodeId!, previewOutputNodeId ?? undefined)}
+                      onRefresh={() => handlePreviewNode(selectedNode?.id ?? previewNodeId ?? '', previewOutputNodeId ?? undefined)}
+                      onClear={() => setPreviewResult(null)}
                       outputOptions={outputOptions}
                       selectedOutputId={previewOutputNodeId ?? undefined}
-                      onOutputChange={(newOutputId) => handlePreviewNode(previewNodeId!, newOutputId)}
+                      onOutputChange={(newOutputId) => handlePreviewNode(selectedNode?.id ?? previewNodeId ?? '', newOutputId)}
                     />
                   </div>
                 );
@@ -2580,13 +2590,13 @@ export default function JobDesignerPage() {
           <button
             onClick={() => setAiPanelOpen((p) => !p)}
             title={aiPanelOpen ? "AI Agent 닫기" : "AI Agent 열기"}
-            className={`absolute z-10 top-[38%] -translate-y-1/2
+            className={`absolute z-10 top-[25%] -translate-y-1/2
               flex items-center justify-center
               rounded-l-xl border border-r-0 transition-all duration-300 ease-in-out shadow-lg
               ${
                 aiPanelOpen
                   ? "-left-3 w-3 h-16 bg-[#e0e7ff] border-[#6366f1] hover:bg-[#c7d2fe]"
-                  : "-left-6 w-6 h-20 bg-[#faf5ff] border-[#d8b4fe] text-[#7c3aed] hover:bg-[#f3e8ff] hover:border-[#a855f7] hover:shadow-[0_0_12px_rgba(124,58,237,0.2)]"
+                  : "-left-6 w-6 h-16 bg-[#faf5ff] border-[#d8b4fe] text-[#7c3aed] hover:bg-[#f3e8ff] hover:border-[#a855f7] hover:shadow-[0_0_12px_rgba(124,58,237,0.2)]"
               }`}
           >
             {!aiPanelOpen && (
@@ -2847,7 +2857,7 @@ function SchedulePanel({ jobId }: { jobId: string }) {
   };
 
   return (
-    <div className="h-full overflow-y-auto px-4 py-3" style={{ color: "#c9d1d9" }}>
+    <div className="h-full overflow-y-auto px-4 py-3" style={{ background: "#282C34", color: "#c9d1d9" }}>
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#8b949e" }}>
           이 Job의 워크플로우 ({schedules.length})

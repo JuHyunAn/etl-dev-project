@@ -54,7 +54,7 @@ spring:
             required: true
 
 server:
-  port: 8080
+  port: 8082
 
 etl:
   frontend-url: ${FRONTEND_URL:http://localhost:3001}

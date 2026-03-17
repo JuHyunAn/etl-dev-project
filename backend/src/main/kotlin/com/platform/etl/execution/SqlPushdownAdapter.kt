@@ -220,6 +220,10 @@ class SqlPushdownAdapter(
         if (context.isEmpty()) node
         else node.copy(config = node.config.mapValues { resolveAny(it.value, context) })
 
+    fun resolvePlan(plan: ExecutionPlan): ExecutionPlan =
+        if (plan.context.isEmpty()) plan
+        else plan.copy(ir = plan.ir.copy(nodes = plan.ir.nodes.map { resolveNode(it, plan.context) }))
+
     // ── Node 실행 라우터 ──────────────────────────────────────────
 
     private fun executeNode(

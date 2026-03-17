@@ -13,7 +13,7 @@ export function registerAuthHandlers(
 }
 
 const client = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8080',
+  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8082',
   headers: { 'Content-Type': 'application/json' },
   timeout: 30000,
   withCredentials: true,

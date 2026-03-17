@@ -69,7 +69,7 @@ function LoginView({
     setLoading(true);
     try {
       const res = await axios.post(
-        "http://localhost:8080/api/auth/login",
+        "http://localhost:8082/api/auth/login",
         { email, password },
         { withCredentials: true },
       );
@@ -219,7 +219,7 @@ function RegisterView({ onSwitch }: { onSwitch: (v: ModalView) => void }) {
     setError("");
     setLoading(true);
     try {
-      await axios.post("http://localhost:8080/api/auth/register", {
+      await axios.post("http://localhost:8082/api/auth/register", {
         name,
         email,
         password,
@@ -588,7 +588,7 @@ export default function LoginPage() {
   return (
     <div
       className="flex items-center justify-center h-screen"
-      style={{ background: "#232B37" }}
+      style={{ background: "#0D1C29" }}
     >
       <div className="w-full max-w-sm">
         {/* 로고 */}
@@ -657,7 +657,7 @@ export default function LoginPage() {
             <button
               onClick={() => {
                 window.location.href =
-                  "http://localhost:8080/oauth2/authorization/github";
+                  "http://localhost:8082/oauth2/authorization/github";
               }}
               className="flex items-center justify-center gap-2.5 w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
               style={{ background: "#24292e", color: "#ffffff" }}
@@ -678,7 +678,7 @@ export default function LoginPage() {
             <button
               onClick={() => {
                 window.location.href =
-                  "http://localhost:8080/oauth2/authorization/google";
+                  "http://localhost:8082/oauth2/authorization/google";
               }}
               className="flex items-center justify-center gap-2.5 w-full px-4 py-2.5 rounded-lg text-sm font-medium border transition-colors"
               style={{
