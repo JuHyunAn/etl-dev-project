@@ -2741,6 +2741,7 @@ export default function JobDesignerPage() {
             const cfg = (node?.data as EtlNodeData)?.config ?? {};
             return (cfg.outputMappings ?? {}) as Record<string, MappingRow[]>;
           })()}
+          contextVars={contextVars.filter(v => v.key.trim()).map(v => v.key)}
           onApply={(allMappings) => {
             const node = nodes.find((n) => n.id === mappingTarget.nodeId);
             const existingConfig = (node?.data as EtlNodeData)?.config ?? {};

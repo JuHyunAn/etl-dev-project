@@ -56,6 +56,34 @@ class SchemaService(private val connectionService: ConnectionService) {
         }
     }
 
+    /** 커스텀 쿼리를 실행해 컬럼 메타데이터만 반환 (최대 1행 조회 후 메타 추출) */
+    fun getQuerySchema(connectionId: UUID, query: String): List<ColumnInfo> {
+        val conn = connectionService.get(connectionId)
+        val jdbcUrl = connectionService.buildJdbcUrl(conn)
+        val password = connectionService.getDecryptedPassword(conn.id)
+
+        return DriverManager.getConnection(jdbcUrl, conn.username, password).use { jdbc ->
+            jdbc.createStatement().use { stmt ->
+                stmt.maxRows = 1
+                stmt.executeQuery(query).use { rs ->
+                    val meta = rs.metaData
+                    (1..meta.columnCount).map { i ->
+                        ColumnInfo(
+                            columnName = meta.getColumnName(i),
+                            dataType   = meta.getColumnTypeName(i),
+                            nullable   = meta.isNullable(i) == java.sql.ResultSetMetaData.columnNullable,
+                            columnDefault        = null,
+                            characterMaxLength   = meta.getColumnDisplaySize(i).takeIf { it in 1..65534 },
+                            numericPrecision     = meta.getPrecision(i).takeIf { it > 0 },
+                            numericScale         = meta.getScale(i).takeIf { it >= 0 },
+                            isPrimaryKey         = false
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     fun getTableSchema(connectionId: UUID, tableName: String, schemaName: String? = null): List<ColumnInfo> {
         val conn = connectionService.get(connectionId)
         val jdbcUrl = connectionService.buildJdbcUrl(conn)

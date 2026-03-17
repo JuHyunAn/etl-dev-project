@@ -27,6 +27,9 @@ export const schemaApi = {
     client.get<{ columns: ColumnInfo[] }>(`/api/connections/${connectionId}/schema/tables/${tableName}`, {
       params: schemaName ? { schema: schemaName } : undefined
     }).then(r => r.data.columns),
+  queryColumns: (connectionId: string, query: string) =>
+    client.post<{ columns: ColumnInfo[] }>(`/api/connections/${connectionId}/schema/query-columns`, { query })
+      .then(r => r.data.columns),
 }
 
 // ── Projects ─────────────────────────────────────────────────

@@ -157,6 +157,9 @@ function JdbcInputConfig({ config, onChange }: {
 }) {
   const [showPicker, setShowPicker] = useState(false)
   const [connections, setConnections] = useState<Connection[]>([])
+  const [draftQuery, setDraftQuery] = useState((config.query as string) ?? '')
+  const [queryLoading, setQueryLoading] = useState(false)
+  const [queryError, setQueryError] = useState<string | null>(null)
 
   useEffect(() => {
     connectionsApi.list().then(setConnections).catch(() => {})
@@ -166,6 +169,26 @@ function JdbcInputConfig({ config, onChange }: {
   const selectedConn = connections.find(c => c.id === connId)
 
   useAutoFetchColumns(connId, config, onChange)
+
+  const handleApplyQuery = async () => {
+    if (!connId || !draftQuery.trim()) return
+    setQueryLoading(true)
+    setQueryError(null)
+    try {
+      const cols = await schemaApi.queryColumns(connId, draftQuery.trim())
+      onChange('__raw', { ...config, query: draftQuery.trim(), columns: cols })
+    } catch (e: unknown) {
+      setQueryError(e instanceof Error ? e.message : '쿼리 실행 오류')
+    } finally {
+      setQueryLoading(false)
+    }
+  }
+
+  const handleClearQuery = () => {
+    setDraftQuery('')
+    setQueryError(null)
+    onChange('query', '')
+  }
 
   return (
     <div className="space-y-3">
@@ -196,16 +219,55 @@ function JdbcInputConfig({ config, onChange }: {
         />
       </div>
 
+      {/* Custom Query */}
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-[#64748b]">Custom Query (optional)</label>
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium text-[#64748b]">Custom Query <span className="text-[#94a3b8] font-normal">(optional)</span></label>
+          {(config.query as string) && (
+            <button
+              onClick={handleClearQuery}
+              className="text-[10px] text-[#94a3b8] hover:text-[#ef4444] transition-colors">
+              초기화
+            </button>
+          )}
+        </div>
         <textarea
-          value={(config.query as string) ?? ''}
-          onChange={e => onChange('query', e.target.value)}
-          placeholder="SELECT * FROM table WHERE ..."
-          rows={4}
+          value={draftQuery}
+          onChange={e => { setDraftQuery(e.target.value); setQueryError(null); }}
+          placeholder={'SELECT *\nFROM schema.table_name\nWHERE condition'}
+          rows={10}
           className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded-md px-3 py-2
             text-xs font-mono placeholder-[#94a3b8] focus:outline-none focus:border-[#2563eb] resize-y"
+          style={{ borderColor: queryError ? '#ef4444' : undefined }}
         />
+        {queryError && (
+          <p className="text-[10px] text-[#ef4444] font-mono leading-snug">{queryError}</p>
+        )}
+        {(config.query as string) && !queryError && (
+          <p className="text-[10px] text-[#16a34a]">✓ 적용됨 — Table Name 설정보다 우선합니다</p>
+        )}
+        <button
+          onClick={handleApplyQuery}
+          disabled={!connId || !draftQuery.trim() || queryLoading}
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+          style={{
+            background: !connId || !draftQuery.trim() ? '#f1f5f9' : '#f0fdf4',
+            color: !connId || !draftQuery.trim() ? '#94a3b8' : '#16a34a',
+            border: `1px solid ${!connId || !draftQuery.trim() ? '#e2e8f0' : '#bbf7d0'}`,
+            cursor: !connId || !draftQuery.trim() || queryLoading ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {queryLoading ? (
+            <><Spinner size="sm" /> 쿼리 실행 중...</>
+          ) : (
+            <>
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              적용
+            </>
+          )}
+        </button>
       </div>
 
       {showPicker && connId && selectedConn && (
@@ -254,65 +316,107 @@ function JdbcInputConfig({ config, onChange }: {
       )}
 
       {/* 증분 처리 설정 */}
-      <div className="space-y-2 pt-1 border-t border-[#e2e8f0]">
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-medium text-[#64748b]">증분 처리</label>
-          <input
-            type="checkbox"
-            checked={(config.incremental as Record<string, unknown>)?.enabled === true}
-            onChange={e => onChange('incremental', {
-              ...((config.incremental as Record<string, unknown>) ?? {}),
-              enabled: e.target.checked
-            })}
-            className="w-3.5 h-3.5 accent-[#7c3aed]"
-          />
-        </div>
+      {(() => {
+        const inc = (config.incremental as Record<string, unknown>) ?? {}
+        const enabled = inc.enabled === true
+        return (
+          <div className="pt-1 border-t border-[#e2e8f0]">
+            {/* 헤더 토글 */}
+            <button
+              type="button"
+              onClick={() => onChange('incremental', { ...inc, enabled: !enabled })}
+              className="w-full flex items-center justify-between px-3 py-2 transition-colors"
+              style={{
+                background: enabled ? '#f0fdf4' : '#f8fafc',
+                border: `1px solid ${enabled ? '#86efac' : '#e2e8f0'}`,
+                borderRadius: enabled ? '8px 8px 0 0' : '8px',
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
+                  style={{ background: enabled ? '#16a34a' : '#e2e8f0' }}
+                >
+                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="white" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </div>
+                <span className="text-xs font-semibold" style={{ color: enabled ? '#15803d' : '#64748b' }}>
+                  증분 처리
+                </span>
+                {enabled && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded font-medium" style={{ background: '#dcfce7', color: '#16a34a' }}>
+                    ON
+                  </span>
+                )}
+              </div>
+              <svg
+                className="w-3.5 h-3.5 transition-transform"
+                style={{ color: enabled ? '#16a34a' : '#94a3b8', transform: enabled ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
 
-        {(config.incremental as Record<string, unknown>)?.enabled === true && (
-          <div className="space-y-2 pl-2 border-l-2 border-[#7c3aed]/30">
-            <div className="space-y-1">
-              <label className="text-[11px] text-[#94a3b8]">모드</label>
-              <select
-                value={((config.incremental as Record<string, unknown>)?.mode as string) ?? 'TIMESTAMP'}
-                onChange={e => onChange('incremental', {
-                  ...((config.incremental as Record<string, unknown>) ?? {}),
-                  mode: e.target.value
-                })}
-                className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1 text-xs">
-                <option value="TIMESTAMP">TIMESTAMP (updated_at 기준)</option>
-                <option value="OFFSET">OFFSET (PK 단조증가 기준)</option>
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-[11px] text-[#94a3b8]">기준 컬럼</label>
-              <input
-                value={((config.incremental as Record<string, unknown>)?.column as string) ?? ''}
-                onChange={e => onChange('incremental', {
-                  ...((config.incremental as Record<string, unknown>) ?? {}),
-                  column: e.target.value
-                })}
-                placeholder="updated_at"
-                className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1 text-xs font-mono placeholder-[#94a3b8] focus:outline-none focus:border-[#7c3aed]"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[11px] text-[#94a3b8]">Watermark 변수명</label>
-              <input
-                value={((config.incremental as Record<string, unknown>)?.watermarkVar as string) ?? ''}
-                onChange={e => onChange('incremental', {
-                  ...((config.incremental as Record<string, unknown>) ?? {}),
-                  watermarkVar: e.target.value
-                })}
-                placeholder="last_run"
-                className="w-full bg-[#f8fafc] border border-[#d1d5db] text-[#0f172a] rounded px-2 py-1 text-xs font-mono placeholder-[#94a3b8] focus:outline-none focus:border-[#7c3aed]"
-              />
-            </div>
-            <p className="text-[10px] text-[#94a3b8]">
-              첫 실행: FULL SCAN → 이후 실행: WHERE {(config.incremental as Record<string, unknown>)?.column as string || 'column'} &gt;= 마지막 watermark
-            </p>
+            {enabled && (
+              <div
+                className="rounded-b-lg overflow-hidden"
+                style={{ border: '1px solid #d1d5db', borderTop: 'none', background: '#f8fafc' }}
+              >
+                {/* 옵션 리스트 */}
+                <div className="divide-y" style={{ borderColor: '#e2e8f0' }}>
+                  {/* 모드 */}
+                  <div className="flex items-center px-3 py-2 gap-3">
+                    <label className="text-[11px] font-medium w-[72px] flex-shrink-0" style={{ color: '#64748b' }}>모드</label>
+                    <select
+                      value={(inc.mode as string) ?? 'TIMESTAMP'}
+                      onChange={e => onChange('incremental', { ...inc, mode: e.target.value })}
+                      className="flex-1 min-w-0 bg-white text-[#0f172a] rounded px-2 py-1 text-[11px] focus:outline-none"
+                      style={{ border: '1px solid #e2e8f0' }}
+                    >
+                      <option value="TIMESTAMP">TIMESTAMP</option>
+                      <option value="OFFSET">OFFSET</option>
+                    </select>
+                  </div>
+                  {/* 기준 컬럼 */}
+                  <div className="flex items-center px-3 py-2 gap-3">
+                    <label className="text-[11px] font-medium w-[72px] flex-shrink-0" style={{ color: '#64748b' }}>기준 컬럼</label>
+                    <input
+                      value={(inc.column as string) ?? ''}
+                      onChange={e => onChange('incremental', { ...inc, column: e.target.value })}
+                      placeholder="updated_at"
+                      className="flex-1 min-w-0 bg-white text-[#0f172a] rounded px-2 py-1 text-[11px] font-mono placeholder-[#94a3b8] focus:outline-none"
+                      style={{ border: '1px solid #e2e8f0' }}
+                    />
+                  </div>
+                  {/* Watermark 변수명 */}
+                  <div className="flex items-center px-3 py-2 gap-3">
+                    <label className="text-[11px] font-medium w-[72px] flex-shrink-0" style={{ color: '#64748b' }}>변수명</label>
+                    <input
+                      value={(inc.watermarkVar as string) ?? ''}
+                      onChange={e => onChange('incremental', { ...inc, watermarkVar: e.target.value })}
+                      placeholder="last_run"
+                      className="flex-1 min-w-0 bg-white text-[#0f172a] rounded px-2 py-1 text-[11px] font-mono placeholder-[#94a3b8] focus:outline-none"
+                      style={{ border: '1px solid #e2e8f0' }}
+                    />
+                  </div>
+                </div>
+                {/* 안내 */}
+                <div className="flex items-start gap-1.5 px-3 py-2" style={{ borderTop: '1px solid #e2e8f0', background: '#f1f5f9' }}>
+                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-[10px] leading-snug" style={{ color: '#64748b' }}>
+                    첫 실행: FULL SCAN &nbsp;·&nbsp; 이후: WHERE <span className="font-mono">{(inc.column as string) || 'column'}</span> &gt;= 마지막 watermark
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        )
+      })()}
     </div>
   )
 }

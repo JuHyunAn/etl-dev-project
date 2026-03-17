@@ -18,4 +18,13 @@ class SchemaController(private val service: SchemaService) {
         @RequestParam(required = false) schema: String?
     ) = TableSchemaResponse(connectionId.toString(), tableName,
         service.getTableSchema(connectionId, tableName, schema))
+
+    data class QueryColumnsRequest(val query: String)
+
+    @PostMapping("/query-columns")
+    fun getQueryColumns(
+        @PathVariable connectionId: UUID,
+        @RequestBody req: QueryColumnsRequest
+    ) = TableSchemaResponse(connectionId.toString(), "(custom query)",
+        service.getQuerySchema(connectionId, req.query))
 }

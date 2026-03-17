@@ -11,6 +11,7 @@ import {
   BULK_ENHANCEMENTS,
 } from "../../utils/typeUtils";
 import { useAppStore } from "../../stores";
+import ExpressionBuilderPopup from "./ExpressionBuilderPopup";
 
 // ── TYPE 선택지 ───────────────────────────────────────────────────
 const TYPE_COMMON = [
@@ -170,6 +171,7 @@ interface Props {
   edges: Edge[];
   initialOutputNodeId?: string;
   currentMappingsByOutput: Record<string, MappingRow[]>;
+  contextVars?: string[];
   onApply: (allMappings: Record<string, MappingRow[]>) => void;
   onClose: () => void;
 }
@@ -181,6 +183,7 @@ export default function MappingEditorModal({
   edges,
   initialOutputNodeId,
   currentMappingsByOutput,
+  contextVars = [],
   onApply,
   onClose,
 }: Props) {
@@ -655,7 +658,7 @@ export default function MappingEditorModal({
       line.classList.add("conn-line");
       svg.appendChild(line);
     });
-  });
+  }, [activeMappings, sourceGroups]);
 
   useLayoutEffect(() => { recalcPaths(); });
 
@@ -665,6 +668,9 @@ export default function MappingEditorModal({
 
   // ── 타겟 컬럼 커스텀 드롭다운 ────────────────────────────────
   const [openColSelectRowId, setOpenColSelectRowId] = useState<string | null>(null);
+
+  // ── Expression Builder 팝업 ────────────────────────────────
+  const [openBuilderRowId, setOpenBuilderRowId] = useState<string | null>(null);
 
   const handleDropOnRow = (rowId: string) => {
     if (!draggedSource) return;
@@ -1107,19 +1113,29 @@ export default function MappingEditorModal({
                             </div>
 
                             {/* Expression */}
-                            <div className="flex-1 pl-4 pr-2 min-w-0">
+                            <div className="flex-1 pl-4 pr-1 min-w-0 flex items-center gap-0.5">
                               <input
                                 value={m.expression}
                                 onChange={e => updateMapping(m.id, "expression", e.target.value)}
                                 onClick={e => e.stopPropagation()}
                                 placeholder={m.sourceColumn ? `${m.sourceNodeId ? (sourceGroups.find(g=>g.nodeId===m.sourceNodeId)?.nodeLabel ?? '') + '.' : ''}${m.sourceColumn}` : "expression"}
-                                className="w-full bg-transparent text-[11px] font-mono focus:outline-none"
+                                className="flex-1 min-w-0 bg-transparent text-[11px] font-mono focus:outline-none"
                                 style={{
                                   color: m.expression ? "#7c3aed" : "#94a3b8",
                                   caretColor: "#1e293b",
                                   pointerEvents: draggedSource ? "none" : "auto",
                                 }}
                               />
+                              <button
+                                onClick={e => { e.stopPropagation(); setOpenBuilderRowId(m.id); }}
+                                className="flex-shrink-0 opacity-0 group-hover:opacity-100 px-1 py-0.5 rounded text-[9px] font-mono leading-none transition-all"
+                                style={{ color: "#94a3b8", background: "transparent", pointerEvents: draggedSource ? "none" : "auto" }}
+                                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#388bfd"; (e.currentTarget as HTMLElement).style.background = "#eff6ff"; }}
+                                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#94a3b8"; (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                                title="Expression Builder 열기"
+                              >
+                                ...
+                              </button>
                             </div>
 
                             {/* Type */}
@@ -1198,6 +1214,23 @@ export default function MappingEditorModal({
             )}
           </div>
         </div>
+
+        {/* ── Expression Builder Popup ── */}
+        {openBuilderRowId && (() => {
+          const m = activeMappings.find(r => r.id === openBuilderRowId);
+          return m ? (
+            <ExpressionBuilderPopup
+              targetName={m.targetName}
+              initialExpression={m.expression}
+              sourceNodeId={m.sourceNodeId}
+              sourceColumn={m.sourceColumn}
+              sourceGroups={sourceGroups}
+              contextVars={contextVars}
+              onApply={expr => { updateMapping(m.id, "expression", expr); setOpenBuilderRowId(null); }}
+              onClose={() => setOpenBuilderRowId(null)}
+            />
+          ) : null;
+        })()}
 
         {/* ── Warning Banner ── */}
         {showExprWarning && (

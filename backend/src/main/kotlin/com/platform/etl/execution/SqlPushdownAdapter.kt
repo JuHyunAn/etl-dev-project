@@ -602,7 +602,7 @@ class SqlPushdownAdapter(
             val conn     = connectionService.get(java.util.UUID.fromString(connId))
             val jdbcUrl  = connectionService.buildJdbcUrl(conn)
             val password = connectionService.getDecryptedPassword(conn.id)
-            val query    = node.config["query"]?.toString()
+            val query    = node.config["query"]?.toString()?.takeIf { it.isNotBlank() }
                 ?: "SELECT * FROM ${node.config["tableName"]}"
 
             DriverManager.getConnection(jdbcUrl, conn.username, password).use { jdbc ->
