@@ -450,11 +450,16 @@ class SqlPushdownCompiler(
         ComponentType.T_MAP -> {
             val prev = prevCte ?: return null
             val mappings = parseMappings(node.config["mappings"])
+
+            // Var 정의 파싱 (name → expression 맵)
+            val varExprMap = parseVarExpressions(node.config["vars"])
+
             if (mappings.isEmpty()) {
                 "SELECT * FROM $prev"
             } else {
                 val exprs = mappings.joinToString(",\n    ") { m ->
-                    val expr = m.expression.ifBlank { m.sourceColumn }
+                    val rawExpr = m.expression.ifBlank { m.sourceColumn }
+                    val expr = expandExpression(rawExpr, varExprMap)
                     if (m.targetName.isNotBlank() && m.targetName != expr)
                         "$expr AS ${quoteIfNeeded(m.targetName)}"
                     else expr
@@ -596,6 +601,53 @@ class SqlPushdownCompiler(
             }
         }
         return visited
+    }
+
+    /**
+     * config["vars"] → { varName → sqlExpression } 맵 파싱.
+     * vars 배열: [{ id, name, type, expression }, ...]
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun parseVarExpressions(raw: Any?): Map<String, String> {
+        val list = raw as? List<*> ?: return emptyMap()
+        return list.filterIsInstance<Map<*, *>>().mapNotNull { v ->
+            val name = v["name"]?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val expr = v["expression"]?.toString() ?: ""
+            name to expr
+        }.toMap()
+    }
+
+    /**
+     * Expression DSL 전개 (SQL Pushdown용):
+     * - var.xxx  → 해당 Var의 expression을 재귀 전개 (괄호로 감쌈, 체이닝 지원)
+     * - col.xxx  → xxx  (prefix 제거, 하위 호환)
+     * - ctx.xxx  → xxx  (prefix 제거, 향후 context 값 주입 예정)
+     * - prefix 없는 레거시 표현식 → 그대로 (하위 호환)
+     */
+    private fun expandExpression(expr: String, varExprMap: Map<String, String>, depth: Int = 0): String {
+        if (depth > 10) return expr  // 순환 참조 안전장치
+
+        var result = expr
+
+        // var.xxx → 해당 Var expression 재귀 전개
+        result = Regex("""(?<![A-Za-z0-9_])var\.([A-Za-z_][A-Za-z0-9_]*)""").replace(result) { match ->
+            val varName = match.groupValues[1]
+            val varExpr = varExprMap[varName]
+            if (varExpr != null) "(${expandExpression(varExpr, varExprMap, depth + 1)})"
+            else match.value  // 미존재 Var → 그대로 (validate 단계에서 오류 처리)
+        }
+
+        // col.xxx → xxx
+        result = Regex("""(?<![A-Za-z0-9_])col\.([A-Za-z_][A-Za-z0-9_]*)""").replace(result) { match ->
+            match.groupValues[1]
+        }
+
+        // ctx.xxx → xxx (향후 plan.ir.context 값으로 대체 예정)
+        result = Regex("""(?<![A-Za-z0-9_])ctx\.([A-Za-z_][A-Za-z0-9_]*)""").replace(result) { match ->
+            match.groupValues[1]
+        }
+
+        return result
     }
 
     @Suppress("UNCHECKED_CAST")

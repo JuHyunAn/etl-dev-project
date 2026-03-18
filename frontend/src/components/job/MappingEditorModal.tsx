@@ -3,7 +3,7 @@ import { useDraggableResizable, RESIZE_CURSORS } from "../../utils/useDraggableR
 import { schemaApi } from "../../api";
 import { Spinner } from "../ui";
 import type { Node, Edge } from "@xyflow/react";
-import type { ColumnInfo } from "../../types";
+import type { ColumnInfo, VarRow } from "../../types";
 import { type MappingRow, buildAutoMappings } from "../../utils/mapping";
 import {
   normalizeType,
@@ -172,10 +172,13 @@ interface Props {
   edges: Edge[];
   initialOutputNodeId?: string;
   currentMappingsByOutput: Record<string, MappingRow[]>;
+  initialVars?: VarRow[];
   contextVars?: string[];
-  onApply: (allMappings: Record<string, MappingRow[]>) => void;
+  onApply: (allMappings: Record<string, MappingRow[]>, vars: VarRow[]) => void;
   onClose: () => void;
 }
+
+const VAR_TYPES = ["VARCHAR", "INTEGER", "DECIMAL", "DATE", "TIMESTAMP", "BOOLEAN"] as const;
 
 export default function MappingEditorModal({
   nodeId,
@@ -184,6 +187,7 @@ export default function MappingEditorModal({
   edges,
   initialOutputNodeId,
   currentMappingsByOutput,
+  initialVars = [],
   contextVars = [],
   onApply,
   onClose,
@@ -205,6 +209,10 @@ export default function MappingEditorModal({
   const [showExprWarning, setShowExprWarning] = useState(false);
   const [popoverRowId, setPopoverRowId] = useState<string | null>(null);
   const [showEnhDropdown, setShowEnhDropdown] = useState(false);
+
+  // ── Variables (Var / 중간변수) ────────────────────────────────
+  const [vars, setVars] = useState<VarRow[]>(initialVars);
+  const [openVarBuilderIdx, setOpenVarBuilderIdx] = useState<number | null>(null);
 
   const connections = useAppStore((s) => s.connections);
 
@@ -574,7 +582,7 @@ export default function MappingEditorModal({
       setShowExprWarning(true);
       return;
     }
-    onApply(mappingsByOutput);
+    onApply(mappingsByOutput, vars);
     onClose();
   };
 
@@ -613,59 +621,104 @@ export default function MappingEditorModal({
   const targetPanelRef = useRef<HTMLDivElement>(null);
   const sourceRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const targetRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const varRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const recalcPaths = useCallback(() => {
     const svg = svgRef.current;
     const body = bodyRef.current;
     if (!svg || !body) return;
 
-    // 기존 커넥션 라인 제거
     svg.querySelectorAll(".conn-line").forEach(el => el.remove());
-
     const bodyRect = body.getBoundingClientRect();
+
+    const appendLine = (d: string, color: string) => {
+      const shadow = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      shadow.setAttribute("d", d); shadow.setAttribute("fill", "none");
+      shadow.setAttribute("stroke", color); shadow.setAttribute("stroke-width", "3");
+      shadow.setAttribute("opacity", "0.15"); shadow.classList.add("conn-line");
+      svg.appendChild(shadow);
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      line.setAttribute("d", d); line.setAttribute("fill", "none");
+      line.setAttribute("stroke", color); line.setAttribute("stroke-width", "1.5");
+      line.setAttribute("opacity", "0.85"); line.classList.add("conn-line");
+      svg.appendChild(line);
+    };
+
+    const bezier = (x1: number, y1: number, x2: number, y2: number) => {
+      const dx = Math.abs(x2 - x1) * 0.5;
+      return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+    };
+
+    // ── Source → Output (var 기반 제외) ──
     activeMappings.forEach((m) => {
       if (!m.sourceNodeId || !m.sourceColumn) return;
-      const srcKey = `${m.sourceNodeId}:${m.sourceColumn}`;
-      const srcEl = sourceRowRefs.current.get(srcKey);
+      if (m.expression && /^var\./i.test(m.expression.trim())) return;
+      const srcEl = sourceRowRefs.current.get(`${m.sourceNodeId}:${m.sourceColumn}`);
       const tgtEl = targetRowRefs.current.get(m.id);
       if (!srcEl || !tgtEl) return;
       const srcRect = srcEl.getBoundingClientRect();
       const tgtRect = tgtEl.getBoundingClientRect();
-      const x1 = srcRect.right - bodyRect.left;
-      const y1 = srcRect.top + srcRect.height / 2 - bodyRect.top;
-      const x2 = tgtRect.left - bodyRect.left;
-      const y2 = tgtRect.top + tgtRect.height / 2 - bodyRect.top;
-      const dx = Math.abs(x2 - x1) * 0.5;
-      const d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
-      const color = getSourceColor(m.sourceNodeId);
-
-      // 그림자 라인
-      const shadow = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      shadow.setAttribute("d", d);
-      shadow.setAttribute("fill", "none");
-      shadow.setAttribute("stroke", color);
-      shadow.setAttribute("stroke-width", "3");
-      shadow.setAttribute("opacity", "0.15");
-      shadow.classList.add("conn-line");
-      svg.appendChild(shadow);
-
-      // 메인 라인
-      const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      line.setAttribute("d", d);
-      line.setAttribute("fill", "none");
-      line.setAttribute("stroke", color);
-      line.setAttribute("stroke-width", "1.5");
-      line.setAttribute("opacity", "0.85");
-      line.classList.add("conn-line");
-      svg.appendChild(line);
+      appendLine(
+        bezier(srcRect.right - bodyRect.left, srcRect.top + srcRect.height / 2 - bodyRect.top,
+               tgtRect.left - bodyRect.left, tgtRect.top + tgtRect.height / 2 - bodyRect.top),
+        getSourceColor(m.sourceNodeId)
+      );
     });
-  }, [activeMappings, sourceGroups]);
+
+    // ── Source → Var ──
+    vars.forEach(v => {
+      if (!v.expression) return;
+      const colMatches = [...v.expression.matchAll(/col\.(\w+)/g)];
+      if (colMatches.length === 0) return;
+      const varEl = varRowRefs.current.get(v.id);
+      if (!varEl) return;
+      const varRect = varEl.getBoundingClientRect();
+      const x2 = varRect.left - bodyRect.left;
+      const y2 = varRect.top + varRect.height / 2 - bodyRect.top;
+      colMatches.forEach(match => {
+        const colName = match[1].toLowerCase();
+        for (const [key, srcEl] of sourceRowRefs.current.entries()) {
+          if (key.toLowerCase().endsWith(`:${colName}`)) {
+            const nodeId = key.split(":")[0];
+            const srcRect = srcEl.getBoundingClientRect();
+            appendLine(
+              bezier(srcRect.right - bodyRect.left, srcRect.top + srcRect.height / 2 - bodyRect.top, x2, y2),
+              getSourceColor(nodeId)
+            );
+            break;
+          }
+        }
+      });
+    });
+
+    // ── Var → Output ──
+    activeMappings.forEach(m => {
+      if (!m.expression) return;
+      const varMatch = m.expression.trim().match(/^var\.(.+)$/i);
+      if (!varMatch) return;
+      const varName = varMatch[1].trim();
+      const varEntry = vars.find(v => v.name.trim().toLowerCase() === varName.toLowerCase());
+      if (!varEntry) return;
+      const varEl = varRowRefs.current.get(varEntry.id);
+      const tgtEl = targetRowRefs.current.get(m.id);
+      if (!varEl || !tgtEl) return;
+      const varRect = varEl.getBoundingClientRect();
+      const tgtRect = tgtEl.getBoundingClientRect();
+      appendLine(
+        bezier(varRect.right - bodyRect.left, varRect.top + varRect.height / 2 - bodyRect.top,
+               tgtRect.left - bodyRect.left, tgtRect.top + tgtRect.height / 2 - bodyRect.top),
+        "#7c3aed"
+      );
+    });
+  }, [activeMappings, sourceGroups, vars]);
 
   useLayoutEffect(() => { recalcPaths(); });
 
   // ── Drag & Drop ───────────────────────────────────────────────
   const [draggedSource, setDraggedSource] = useState<{ nodeId: string; col: string } | null>(null);
   const [draggedTargetRowId, setDraggedTargetRowId] = useState<string | null>(null);
+  const [draggedVar, setDraggedVar] = useState<{ id: string; name: string } | null>(null);
+  const [draggedVarInputId, setDraggedVarInputId] = useState<string | null>(null);
 
   // ── 타겟 컬럼 커스텀 드롭다운 ────────────────────────────────
   const [openColSelectRowId, setOpenColSelectRowId] = useState<string | null>(null);
@@ -689,11 +742,11 @@ export default function MappingEditorModal({
   const handleDisconnectTarget = () => {
     if (!draggedTargetRowId) return;
     setActiveMappings(
-      activeMappings.map(m =>
-        m.id === draggedTargetRowId
-          ? { ...m, sourceNodeId: "", sourceColumn: "" }
-          : m
-      )
+      activeMappings.map(m => {
+        if (m.id !== draggedTargetRowId) return m;
+        const isVarExpr = /^var\./i.test(m.expression.trim());
+        return { ...m, sourceNodeId: "", sourceColumn: "", expression: isVarExpr ? "" : m.expression };
+      })
     );
     setDraggedTargetRowId(null);
   };
@@ -876,8 +929,14 @@ export default function MappingEditorModal({
           <div
             ref={sourcePanelRef}
             onScroll={recalcPaths}
-            className="w-[30%] flex-shrink-0 overflow-y-auto"
-            style={{ background: "#ffffff", borderRight: "1px solid #e2e8f0", position: "relative", zIndex: 1 }}
+            className="w-[22%] flex-shrink-0 overflow-y-auto"
+            style={{ background: draggedVarInputId ? "#f5f3ff" : "#ffffff", borderRight: "1px solid #e2e8f0", position: "relative", zIndex: 1, transition: "background 0.15s" }}
+            onDragOver={e => { if (draggedVarInputId) e.preventDefault(); }}
+            onDrop={() => {
+              if (!draggedVarInputId) return;
+              setVars(prev => prev.map(r => r.id === draggedVarInputId ? { ...r, expression: "" } : r));
+              setDraggedVarInputId(null);
+            }}
           >
             {loadingCount > 0 && (
               <div className="flex justify-center py-6"><Spinner size="sm" /></div>
@@ -962,20 +1021,270 @@ export default function MappingEditorModal({
             ))}
           </div>
 
-          {/* MIDDLE: Connection zone — 타겟 row 드롭 시 연결 해제 */}
+          {/* GAP: Source → Variables */}
+          {/* <div className="w-[20px] flex-shrink-0" style={{ background: "#f1f5f9", boxShadow: "inset 2px 0 4px rgba(0,0,0,0.08), inset -2px 0 4px rgba(0,0,0,0.08)" }} /> */}
+
+          {/* MIDDLE: Variables 회색 영역 */}
           <div
-            className="w-[18%] flex-shrink-0"
-            style={{ background: draggedTargetRowId ? "#fee2e2" : "#f0f4f8", transition: "background 0.15s" }}
+            className="w-[40%] flex-shrink-0 flex flex-col"
+            style={{
+              background: draggedTargetRowId ? "#fce7f3" : "#f1f5f9",
+              position: "relative",
+              transition: "background 0.15s",
+            }}
             onDragOver={e => { if (draggedTargetRowId) e.preventDefault(); }}
-            onDragLeave={() => {}}
             onDrop={() => handleDisconnectTarget()}
-          />
+          >
+            {/* 연결 해제 드롭 오버레이 */}
+            {draggedTargetRowId && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none"
+                style={{ background: "#fce7f388", backdropFilter: "blur(1px)" }}>
+                <div className="flex flex-col items-center gap-1">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="#be185d">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                  </svg>
+                  <span className="text-[10px] font-medium" style={{ color: "#be185d" }}>연결 해제</span>
+                </div>
+              </div>
+            )}
+
+            {/* Variables 플로팅 카드 */}
+            <div
+              style={{
+                margin: "15px 50px",
+                background: "#ffffff",
+                border: "1px solid #e9d5ff",
+                borderRadius: 8,
+                boxShadow: "0 2px 10px rgba(124, 58, 237, 0.1)",
+                overflow: "hidden",
+                flexShrink: 0,
+                position: "relative",
+                zIndex: 15,
+              }}
+            >
+              {/* Variables 헤더 */}
+              <div
+                className="px-2 py-1.5 flex items-center gap-1.5"
+                style={{ background: "#7c3aed18", borderBottom: "1px solid #e9d5ff" }}
+              >
+                <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: "#7c3aed" }}>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+                <p className="text-[11px] font-semibold flex-1" style={{ color: "#7c3aed" }}>Var</p>
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: "#7c3aed22", color: "#7c3aed" }}>{vars.length}</span>
+                <button
+                  onClick={() => setVars(prev => [...prev, { id: `var-${Date.now()}`, name: "", type: "VARCHAR", expression: "" }])}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded flex-shrink-0 transition-colors text-[10px] font-medium"
+                  style={{ color: "#7c3aed", background: "#7c3aed18" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#7c3aed33"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#7c3aed18"; }}
+                >
+                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                  </svg>
+                  변수 추가
+                </button>
+              </div>
+
+              {/* 컬럼 헤더 + 행 목록: 변수 있을 때만 */}
+              {vars.length > 0 && (
+                <div style={{ position: "relative" }}>
+                  {/* 수직 구분선 */}
+                  <div className="absolute inset-y-0 pointer-events-none" style={{ left: "calc(33% + 18px)", width: 1, background: "#e9d5ff", zIndex: 2 }} />
+                  <div className="absolute inset-y-0 pointer-events-none" style={{ left: "calc(58% + 18px)", width: 1, background: "#e9d5ff", zIndex: 2 }} />
+
+                  {/* 컬럼 헤더 */}
+                  <div className="flex items-center py-1 flex-shrink-0 text-[9px] font-semibold uppercase tracking-wider"
+                    style={{ background: "#faf7ff", borderBottom: "1px solid #e9d5ff", color: "#a78bfa" }}>
+                    <span className="w-[18px] flex-shrink-0" />
+                    <span className="overflow-hidden truncate" style={{ flex: "0 0 33%", paddingLeft: 8 }}>Expression</span>
+                    <span className="overflow-hidden truncate" style={{ flex: "0 0 25%", paddingLeft: 8 }}>Type</span>
+                    <span className="overflow-hidden truncate" style={{ flex: 1, paddingLeft: 8 }}>Variable</span>
+                    <span className="w-6 flex-shrink-0" />
+                    <span className="w-[18px] flex-shrink-0" />
+                  </div>
+
+                  {/* Var 행 목록 */}
+                  <div style={{ overflowY: "auto", maxHeight: 420 }}>
+                    {vars.map((v, idx) => (
+                      <div
+                        key={v.id}
+                        ref={el => { if (el) varRowRefs.current.set(v.id, el); else varRowRefs.current.delete(v.id); }}
+                        className="flex items-center group"
+                        style={{
+                          height: 30,
+                          background: "#ffffff",
+                          borderBottom: "1px solid #f3f0ff",
+                          cursor: draggedSource ? "copy" : "default",
+                        }}
+                        onMouseEnter={e => { if (!draggedSource) e.currentTarget.style.background = "#faf7ff"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "#ffffff"; }}
+                        onDragOver={e => { if (!draggedSource) return; e.preventDefault(); e.currentTarget.style.background = "#ede9fe"; }}
+                        onDragLeave={e => { e.currentTarget.style.background = "#ffffff"; }}
+                        onDrop={e => {
+                          if (!draggedSource) return;
+                          e.preventDefault();
+                          e.currentTarget.style.background = "#ffffff";
+                          setVars(prev => prev.map(r => r.id === v.id ? { ...r, expression: `col.${draggedSource.col}` } : r));
+                          setDraggedSource(null);
+                        }}
+                      >
+                        {/* Left connector dot (source → var) — draggable for disconnect */}
+                        {(() => {
+                          const leftActive = !!v.expression && /col\./i.test(v.expression);
+                          return (
+                            <span
+                              className="px-1 flex-shrink-0 flex items-center justify-center"
+                              draggable={leftActive}
+                              style={{ cursor: leftActive ? "grab" : "default" }}
+                              onDragStart={e => { e.stopPropagation(); if (leftActive) setDraggedVarInputId(v.id); }}
+                              onDragEnd={() => setDraggedVarInputId(null)}
+                            >
+                              <span className="w-2.5 h-2 rounded-full"
+                                style={{
+                                  background: leftActive ? "#7c3aed" : "#e9d5ff",
+                                  border: `1px solid ${leftActive ? "#7c3aed" : "#e9d5ff"}`,
+                                  boxShadow: leftActive ? "0 0 5px #7c3aed88" : undefined,
+                                }}
+                              />
+                            </span>
+                          );
+                        })()}
+
+                        {/* Expression */}
+                        <div className="flex items-center gap-0.5" style={{ flex: "0 0 33%", minWidth: 0, paddingLeft: 8 }}>
+                          <input
+                            value={v.expression}
+                            onChange={e => setVars(prev => prev.map((r, i) => i === idx ? { ...r, expression: e.target.value } : r))}
+                            onClick={e => e.stopPropagation()}
+                            placeholder="col.xxx"
+                            className="flex-1 min-w-0 bg-transparent text-[11px] font-mono focus:outline-none"
+                            style={{ color: v.expression ? "#7c3aed" : "#94a3b8", caretColor: "#1e293b" }}
+                          />
+                          <button
+                            onClick={e => { e.stopPropagation(); setOpenVarBuilderIdx(idx); }}
+                            className="flex-shrink-0 opacity-0 group-hover:opacity-100 px-1 py-0.5 rounded text-[9px] font-mono leading-none transition-all"
+                            style={{ color: "#94a3b8", background: "transparent" }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#7c3aed"; (e.currentTarget as HTMLElement).style.background = "#f3e8ff"; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#94a3b8"; (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                            title="Expression Builder 열기"
+                          >
+                            ...
+                          </button>
+                        </div>
+
+                        {/* Type */}
+                        <div style={{ flex: "0 0 25%", minWidth: 0, paddingLeft: 8, paddingRight: 2 }}>
+                          <div className="relative flex items-center">
+                            <select
+                              value={v.type}
+                              onChange={e => setVars(prev => prev.map((r, i) => i === idx ? { ...r, type: e.target.value } : r))}
+                              onClick={e => e.stopPropagation()}
+                              className="w-full bg-transparent focus:outline-none border-0 cursor-pointer leading-none pr-3"
+                              style={{ fontSize: 9, color: "#a78bfa", padding: 0, paddingRight: 10, appearance: "none", WebkitAppearance: "none" }}
+                            >
+                              {VAR_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                            <svg className="w-2.5 h-2.5 flex-shrink-0 pointer-events-none absolute right-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: "#94a3b8" }}>
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
+                        </div>
+
+                        {/* Variable (Name) — draggable to Output for Var→Output connection */}
+                        {(() => {
+                          const isDuplicate = v.name && vars.filter((r, i) => i !== idx && r.name === v.name).length > 0;
+                          return (
+                            <div
+                              style={{ flex: 1, minWidth: 0, paddingLeft: 8, paddingRight: 2 }}
+                              draggable={!!v.name}
+                              onDragStart={e => { e.stopPropagation(); if (v.name) { setDraggedVar({ id: v.id, name: v.name }); e.dataTransfer.setData("var-name", v.name); e.dataTransfer.setData("var-id", v.id); } }}
+                              onDragEnd={() => setDraggedVar(null)}
+                              title={isDuplicate ? "중복된 변수명입니다" : undefined}
+                            >
+                              <input
+                                value={v.name}
+                                onChange={e => setVars(prev => prev.map((r, i) => i === idx ? { ...r, name: e.target.value } : r))}
+                                onClick={e => e.stopPropagation()}
+                                onDragStart={e => e.preventDefault()}
+                                placeholder="var_name"
+                                className="w-full bg-transparent text-[11px] font-mono focus:outline-none leading-none"
+                                style={{ color: isDuplicate ? "#ef4444" : v.name ? "#5b21b6" : "#94a3b8", caretColor: "#1e293b", cursor: v.name ? "grab" : "text" }}
+                              />
+                            </div>
+                          );
+                        })()}
+
+                        {/* 위/아래 이동 */}
+                        <div className="flex flex-col flex-shrink-0 opacity-0 group-hover:opacity-100 transition-all" style={{ gap: 1 }}>
+                          <button
+                            disabled={idx === 0}
+                            onClick={e => { e.stopPropagation(); setVars(prev => { const a = [...prev]; [a[idx-1], a[idx]] = [a[idx], a[idx-1]]; return a; }); }}
+                            className="p-0.5 rounded"
+                            style={{ color: idx === 0 ? "#d1d5db" : "#94a3b8", lineHeight: 1 }}
+                            onMouseEnter={e => { if (idx !== 0) (e.currentTarget as HTMLElement).style.color = "#7c3aed"; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = idx === 0 ? "#d1d5db" : "#94a3b8"; }}
+                          >
+                            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" /></svg>
+                          </button>
+                          <button
+                            disabled={idx === vars.length - 1}
+                            onClick={e => { e.stopPropagation(); setVars(prev => { const a = [...prev]; [a[idx], a[idx+1]] = [a[idx+1], a[idx]]; return a; }); }}
+                            className="p-0.5 rounded"
+                            style={{ color: idx === vars.length - 1 ? "#d1d5db" : "#94a3b8", lineHeight: 1 }}
+                            onMouseEnter={e => { if (idx !== vars.length - 1) (e.currentTarget as HTMLElement).style.color = "#7c3aed"; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = idx === vars.length - 1 ? "#d1d5db" : "#94a3b8"; }}
+                          >
+                            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" /></svg>
+                          </button>
+                        </div>
+
+                        {/* Delete */}
+                        <div className="w-6 flex-shrink-0 flex justify-center">
+                          <button
+                            onClick={e => { e.stopPropagation(); setVars(prev => prev.filter((_, i) => i !== idx)); }}
+                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded transition-all"
+                            style={{ color: "#94a3b8" }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#f85149"; (e.currentTarget as HTMLElement).style.background = "#fee2e2"; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#94a3b8"; (e.currentTarget as HTMLElement).style.background = ""; }}
+                          >
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+
+                        {/* Right connector dot (var → output) — active only when actually referenced in output */}
+                        {(() => {
+                          const rightActive = !!v.name && activeMappings.some(m => m.expression.trim().toLowerCase() === `var.${v.name.toLowerCase()}`);
+                          return (
+                            <span
+                              className="px-1 flex-shrink-0 flex items-center justify-center"
+                              draggable={!!v.name}
+                              style={{ cursor: v.name ? "grab" : "default" }}
+                              onDragStart={e => { e.stopPropagation(); if (v.name) { setDraggedVar({ id: v.id, name: v.name }); e.dataTransfer.setData("var-name", v.name); e.dataTransfer.setData("var-id", v.id); } }}
+                              onDragEnd={() => setDraggedVar(null)}
+                            >
+                              <span className="w-2.5 h-2 rounded-full"
+                                style={{
+                                  background: rightActive ? "#7c3aed" : "#e9d5ff",
+                                  border: `1px solid ${rightActive ? "#7c3aed" : "#e9d5ff"}`,
+                                  boxShadow: rightActive ? "0 0 5px #7c3aed88" : undefined,
+                                }}
+                              />
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
 
           {/* RIGHT: Output Mapping */}
-          <div className="flex-1 flex flex-col min-w-0" style={{ background: "#ffffff", position: "relative", zIndex: 1 }}>
-            {/* 통 수직 구분선: Column|Expression, Expression|Type */}
-            <div className="absolute inset-y-0 pointer-events-none" style={{ left: "calc(17px + 33%)", width: 1, background: "#e2e8f0", zIndex: 2 }} />
-            <div className="absolute inset-y-0 pointer-events-none" style={{ left: "calc(100% - 126px)", width: 1, background: "#e2e8f0", zIndex: 2 }} />
+          <div className="flex-1 flex flex-col min-w-0" style={{ background: "#ffffff", borderLeft: "1px solid #e2e8f0", position: "relative", zIndex: 1 }}>
             {!activeOutputId ? (
               <div className="flex-1 flex items-center justify-center">
                 <p className="text-sm" style={{ color: "#94a3b8" }}>Output 탭을 선택하세요</p>
@@ -1007,24 +1316,34 @@ export default function MappingEditorModal({
                   ) : null;
                 })()}
 
-                {/* Column header row */}
-                <div
-                  className="flex items-center pl-1 pr-2 py-1.5 flex-shrink-0 text-[10px] font-semibold uppercase tracking-wider"
-                  style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0", color: "#94a3b8" }}
-                >
-                  <span className="w-3 flex-shrink-0" />
-                  <span className="w-[33%] flex-shrink-0 px-2">Column</span>
-                  <span className="flex-1 pl-4 pr-2">Expression</span>
-                  <span className="w-[90px] flex-shrink-0 px-2">Type</span>
-                  <span className="w-7 flex-shrink-0" />
-                </div>
+                {/* 컬럼 헤더 + rows wrapper (실선 범위) */}
+                <div className="flex-1 flex flex-col min-h-0" style={{ position: "relative" }}>
+                  {/* 수직 구분선: mapping 있을 때만 */}
+                  {activeMappings.length > 0 && <>
+                    <div className="absolute inset-y-0 pointer-events-none" style={{ left: "calc(17px + 28%)", width: 1, background: "#e2e8f0", zIndex: 2 }} />
+                    <div className="absolute inset-y-0 pointer-events-none" style={{ left: "calc(100% - 126px)", width: 1, background: "#e2e8f0", zIndex: 2 }} />
+                  </>}
 
-                {/* Mapping rows */}
-                <div
-                  ref={targetPanelRef}
-                  onScroll={recalcPaths}
-                  className="flex-1 overflow-y-auto"
-                >
+                  {/* Column header row: mapping 있을 때만, zIndex 제거 */}
+                  {activeMappings.length > 0 && (
+                    <div
+                      className="flex items-center pl-1 pr-2 py-1.5 flex-shrink-0 text-[10px] font-semibold uppercase tracking-wider"
+                      style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0", color: "#94a3b8" }}
+                    >
+                      <span className="w-3 flex-shrink-0" />
+                      <span className="w-[28%] flex-shrink-0 px-2">Column</span>
+                      <span className="flex-1 pl-4 pr-2">Expression</span>
+                      <span className="w-[90px] flex-shrink-0 px-2">Type</span>
+                      <span className="w-7 flex-shrink-0" />
+                    </div>
+                  )}
+
+                  {/* Mapping rows */}
+                  <div
+                    ref={targetPanelRef}
+                    onScroll={recalcPaths}
+                    className="flex-1 overflow-y-auto"
+                  >
                   {activeMappings.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 gap-3">
                       <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}>
@@ -1051,36 +1370,58 @@ export default function MappingEditorModal({
                             key={m.id}
                             ref={el => { if (el) targetRowRefs.current.set(m.id, el); else targetRowRefs.current.delete(m.id); }}
                             onClick={() => { if (isClickTarget) handleTargetClick(m.id); setPopoverRowId(null); setOpenColSelectRowId(null); }}
-                            draggable={!!m.sourceNodeId}
-                            onDragStart={() => { if (m.sourceNodeId) { setDraggedTargetRowId(m.id); setOpenColSelectRowId(null); } }}
+                            draggable={!!m.sourceNodeId || /^var\./i.test(m.expression.trim())}
+                            onDragStart={() => { if (m.sourceNodeId || /^var\./i.test(m.expression.trim())) { setDraggedTargetRowId(m.id); setOpenColSelectRowId(null); } }}
                             onDragEnd={() => setDraggedTargetRowId(null)}
-                            onDragOver={e => { if (!draggedSource) return; e.preventDefault(); if (!rowBg) e.currentTarget.style.background = color + "33"; }}
+                            onDragOver={e => {
+                              const isVarDrag = draggedVar || e.dataTransfer.types.includes("var-id");
+                              if (!draggedSource && !isVarDrag) return;
+                              e.preventDefault();
+                              if (!rowBg) e.currentTarget.style.background = isVarDrag ? "#ede9fe" : color + "33";
+                            }}
                             onDragLeave={e => { e.currentTarget.style.background = rowBg ?? ""; }}
-                            onDrop={e => { if (!draggedSource) return; e.preventDefault(); e.currentTarget.style.background = rowBg ?? ""; handleDropOnRow(m.id); }}
+                            onDrop={e => {
+                              e.preventDefault();
+                              e.currentTarget.style.background = rowBg ?? "";
+                              const varName = e.dataTransfer.getData("var-name") || draggedVar?.name;
+                              if (varName) {
+                                updateMapping(m.id, "expression", `var.${varName}`);
+                                setDraggedVar(null);
+                              } else if (draggedSource) {
+                                handleDropOnRow(m.id);
+                              }
+                            }}
                             className="flex items-center pl-1 pr-2 group transition-colors"
                             style={{
                               height: 28,
                               borderBottom: "1px solid #f1f5f9",
                               background: rowBg ?? undefined,
-                              cursor: isClickTarget ? "pointer" : draggedSource ? "copy" : "default",
+                              cursor: isClickTarget ? "pointer" : (draggedSource || draggedVar) ? "copy" : "default",
                             }}
                             onMouseEnter={e => { if (!rowBg) e.currentTarget.style.background = isClickTarget ? color + "22" : "#f8fafc"; }}
                             onMouseLeave={e => { e.currentTarget.style.background = rowBg ?? ""; }}
                           >
                             {/* Left connector dot — 드래그 핸들 (연결 해제) */}
-                            <span
-                              className="w-3 flex-shrink-0 flex items-center justify-center"
-                              style={{ marginRight: 1, cursor: m.sourceNodeId ? "grab" : "default" }}
-                              draggable={!!m.sourceNodeId}
-                              onDragStart={e => { e.stopPropagation(); if (m.sourceNodeId) setDraggedTargetRowId(m.id); }}
-                              onDragEnd={() => setDraggedTargetRowId(null)}
-                            >
-                              <span className="w-3 h-2 rounded-full"
-                                style={{ background: m.sourceNodeId ? color : "#e2e8f0", border: `1px solid ${m.sourceNodeId ? color : "#e2e8f0"}`, boxShadow: m.sourceNodeId ? `0 0 4px ${color}88` : undefined }} />
-                            </span>
+                            {(() => {
+                              const isVarExpr = /^var\./i.test(m.expression.trim());
+                              const isConnected = !!m.sourceNodeId || isVarExpr;
+                              const dotColor = m.sourceNodeId ? color : isVarExpr ? "#7c3aed" : "#e2e8f0";
+                              return (
+                                <span
+                                  className="w-3 flex-shrink-0 flex items-center justify-center"
+                                  style={{ marginRight: 1, cursor: isConnected ? "grab" : "default" }}
+                                  draggable={isConnected}
+                                  onDragStart={e => { e.stopPropagation(); if (isConnected) setDraggedTargetRowId(m.id); }}
+                                  onDragEnd={() => setDraggedTargetRowId(null)}
+                                >
+                                  <span className="w-3 h-2 rounded-full"
+                                    style={{ background: dotColor, border: `1px solid ${dotColor}`, boxShadow: isConnected ? `0 0 4px ${dotColor}88` : undefined }} />
+                                </span>
+                              );
+                            })()}
 
                             {/* Target Column — 커스텀 드롭다운 */}
-                            <div className="w-[33%] flex-shrink-0 px-2 relative">
+                            <div className="w-[28%] flex-shrink-0 px-2 relative">
                               {activeTargetMap.size > 0 ? (
                                 <>
                                   <div
@@ -1167,12 +1508,13 @@ export default function MappingEditorModal({
 
                             {/* Type */}
                             <div className="w-[90px] flex-shrink-0 flex items-center gap-0.5 px-1">
+                              <div className="flex-1 min-w-0 relative flex items-center">
                               <select
                                 value={m.type}
                                 onChange={e => updateMapping(m.id, "type", e.target.value)}
                                 onClick={e => e.stopPropagation()}
-                                className="flex-1 min-w-0 bg-transparent text-[11px] focus:outline-none border-0 cursor-pointer"
-                                style={{ color: "#64748b", pointerEvents: draggedSource ? "none" : "auto" }}
+                                className="w-full bg-transparent text-[11px] focus:outline-none border-0 cursor-pointer pr-4"
+                                style={{ color: "#64748b", pointerEvents: draggedSource ? "none" : "auto", appearance: "none", WebkitAppearance: "none" }}
                               >
                                 {!ALL_KNOWN_TYPES.has(m.type) && <option value={m.type}>{m.type}</option>}
                                 {TYPE_COMMON.map(t => <option key={t} value={t}>{t}</option>)}
@@ -1189,6 +1531,10 @@ export default function MappingEditorModal({
                                   <optgroup label="──── MS SQL ────">{TYPE_MSSQL.map(t => <option key={t} value={t}>{t}</option>)}</optgroup>
                                 )}
                               </select>
+                              <svg className="w-2.5 h-2.5 flex-shrink-0 pointer-events-none absolute right-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: "#94a3b8" }}>
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                              </div>
                               {castResult.severity !== "none" && (
                                 <button
                                   title={castResult.warning ?? "타입 변환 필요"}
@@ -1237,12 +1583,13 @@ export default function MappingEditorModal({
                     {selectedSourceCol ? `"${selectedSourceCol.col}" 행 추가` : "행 추가"}
                   </button>
                 </div>
+                </div>{/* end: 컬럼 헤더 + rows wrapper */}
               </>
             )}
           </div>
         </div>
 
-        {/* ── Expression Builder Popup ── */}
+        {/* ── Expression Builder Popup (매핑용) ── */}
         {openBuilderRowId && (() => {
           const m = activeMappings.find(r => r.id === openBuilderRowId);
           return m ? (
@@ -1253,8 +1600,27 @@ export default function MappingEditorModal({
               sourceColumn={m.sourceColumn}
               sourceGroups={sourceGroups}
               contextVars={contextVars}
+              vars={vars}
               onApply={expr => { updateMapping(m.id, "expression", expr); setOpenBuilderRowId(null); }}
               onClose={() => setOpenBuilderRowId(null)}
+            />
+          ) : null;
+        })()}
+
+        {/* ── Expression Builder Popup (Var용) ── */}
+        {openVarBuilderIdx !== null && (() => {
+          const v = vars[openVarBuilderIdx];
+          return v ? (
+            <ExpressionBuilderPopup
+              targetName={`var.${v.name || "(unnamed)"}`}
+              initialExpression={v.expression}
+              sourceNodeId=""
+              sourceColumn=""
+              sourceGroups={sourceGroups}
+              contextVars={contextVars}
+              vars={vars.slice(0, openVarBuilderIdx!).filter(r => r.name)}
+              onApply={expr => { setVars(prev => prev.map((r, i) => i === openVarBuilderIdx ? { ...r, expression: expr } : r)); setOpenVarBuilderIdx(null); }}
+              onClose={() => setOpenVarBuilderIdx(null)}
             />
           ) : null;
         })()}

@@ -2755,12 +2755,17 @@ export default function JobDesignerPage() {
             const cfg = (node?.data as EtlNodeData)?.config ?? {};
             return (cfg.outputMappings ?? {}) as Record<string, MappingRow[]>;
           })()}
+          initialVars={(() => {
+            const node = nodes.find((n) => n.id === mappingTarget.nodeId);
+            const cfg = (node?.data as EtlNodeData)?.config ?? {};
+            return Array.isArray(cfg.vars) ? (cfg.vars as import("../types").VarRow[]) : [];
+          })()}
           contextVars={contextVars.filter(v => v.key.trim()).map(v => v.key)}
-          onApply={(allMappings) => {
+          onApply={(allMappings, vars) => {
             const node = nodes.find((n) => n.id === mappingTarget.nodeId);
             const existingConfig = (node?.data as EtlNodeData)?.config ?? {};
             handleUpdateNode(mappingTarget.nodeId, {
-              config: { ...existingConfig, outputMappings: allMappings },
+              config: { ...existingConfig, outputMappings: allMappings, vars },
             });
           }}
           onClose={() => setMappingTarget(null)}

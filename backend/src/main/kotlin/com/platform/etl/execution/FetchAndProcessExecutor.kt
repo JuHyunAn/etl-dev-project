@@ -158,6 +158,7 @@ class FetchAndProcessExecutor(
 
             // tMap 매핑 준비
             val mappingEntries = extractMappings(mapNodes, outputNode)
+            val varEntries = extractVars(mapNodes)
 
             var totalRows = 0L
 
@@ -206,7 +207,7 @@ class FetchAndProcessExecutor(
                                 // tMap 변환 적용 + Broadcast JOIN 룩업
                                 val dstRow = applyMappings(
                                     mappingEntries, srcColumns, srcRow,
-                                    broadcastMaps, targetColumns
+                                    broadcastMaps, targetColumns, varEntries
                                 )
 
                                 batch += dstRow
@@ -276,6 +277,8 @@ class FetchAndProcessExecutor(
                 .mapNotNull { id -> ir.nodes.find { it.id == id && it.type == ComponentType.T_JOIN } }
             val broadcastMaps = buildBroadcastMaps(joinNodes, ir, logs)
 
+            val varEntries = extractVars(mapNodes)
+
             if (downstreamOutputs.size > 1) {
                 // Output별 매핑을 각각 적용해서 tableRowSamples 구성
                 val tableRowSamples = mutableMapOf<String, LogRowData>()
@@ -300,7 +303,7 @@ class FetchAndProcessExecutor(
                                     if (!applyFilters(filterNodes, srcColumns, srcRow)) continue
                                     // 매핑 적용 → {targetName: value} 맵 구성
                                     val dstRow = if (mappingEntries.isEmpty() && targetColumns.isEmpty()) srcRow
-                                        else applyMappings(mappingEntries, srcColumns, srcRow, broadcastMaps, targetColumns)
+                                        else applyMappings(mappingEntries, srcColumns, srcRow, broadcastMaps, targetColumns, varEntries)
                                     val valueMap: Map<String, Any?> = targetColumns.zip(dstRow).toMap()
                                         .let { m -> m + srcColumns.zip(srcRow).filter { (k, _) -> !m.containsKey(k) } }
                                     // displayCols 순서로 값 재정렬
@@ -348,7 +351,7 @@ class FetchAndProcessExecutor(
                                 val srcRow = srcColumns.map { col -> runCatching { rs.getObject(col) }.getOrNull() }
                                 if (!applyFilters(filterNodes, srcColumns, srcRow)) continue
                                 val dstRow = if (mappingEntries.isEmpty() && targetColumns.isEmpty()) srcRow
-                                    else applyMappings(mappingEntries, srcColumns, srcRow, broadcastMaps, targetColumns)
+                                    else applyMappings(mappingEntries, srcColumns, srcRow, broadcastMaps, targetColumns, varEntries)
                                 rows += dstRow
                                 count++
                             }
@@ -393,6 +396,8 @@ class FetchAndProcessExecutor(
         val expression: String
     )
 
+    private data class VarEntry(val name: String, val expression: String)
+
     private fun extractMappings(mapNodes: List<NodeIR>, outputNode: NodeIR): List<MappingEntry> {
         if (mapNodes.isEmpty()) return emptyList()
 
@@ -404,6 +409,19 @@ class FetchAndProcessExecutor(
         val rawMappings = outputMappings?.get(outputNode.id) ?: lastMap.config["mappings"]
 
         return parseMappingEntries(rawMappings)
+    }
+
+    /** config["vars"] → VarEntry 목록 파싱 (평가 순서 보장) */
+    @Suppress("UNCHECKED_CAST")
+    private fun extractVars(mapNodes: List<NodeIR>): List<VarEntry> {
+        if (mapNodes.isEmpty()) return emptyList()
+        val lastMap = mapNodes.last()
+        val vars = lastMap.config["vars"] as? List<*> ?: return emptyList()
+        return vars.filterIsInstance<Map<*, *>>().mapNotNull { v ->
+            val name = v["name"]?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val expr = v["expression"]?.toString() ?: ""
+            VarEntry(name, expr)
+        }
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -472,7 +490,8 @@ class FetchAndProcessExecutor(
         srcColumns: List<String>,
         srcRow: List<Any?>,
         broadcastMaps: Map<String, Map<Any?, Map<String, Any?>>>,
-        targetColumns: List<String>
+        targetColumns: List<String>,
+        varEntries: List<VarEntry> = emptyList()
     ): List<Any?> {
         val srcMap = srcColumns.zip(srcRow).toMap().toMutableMap()
 
@@ -486,6 +505,12 @@ class FetchAndProcessExecutor(
             }
         }
 
+        // Var 순서대로 평가 → varMap 구성 (앞 Var를 뒤 Var에서 참조 가능)
+        val varMap = mutableMapOf<String, Any?>()
+        for (v in varEntries) {
+            varMap[v.name] = evaluateExpression(v.expression, srcMap, varMap)
+        }
+
         if (mappings.isEmpty()) {
             // 매핑 없으면 타겟 컬럼명으로 소스 맵에서 대소문자 무관 조회
             return targetColumns.map { tgtCol ->
@@ -497,28 +522,64 @@ class FetchAndProcessExecutor(
         }
 
         return mappings.map { entry ->
-            evaluateExpression(entry.expression, srcMap)
+            evaluateExpression(entry.expression, srcMap, varMap)
         }
     }
 
     /**
      * Expression 평가 (단순 패턴만 처리).
-     * 복잡한 표현식은 소스 컬럼값 그대로 반환.
+     * - var.xxx : varMap에서 조회 (Var 중간변수)
+     * - col.xxx : colMap에서 조회 (prefix 제거)
+     * - ctx.xxx : colMap에서 조회 (향후 context 주입 예정)
+     * - 레거시 표현식 (prefix 없음) : 기존 로직 그대로 (하위 호환)
      */
-    private fun evaluateExpression(expr: String, colMap: Map<String, Any?>): Any? {
+    private fun evaluateExpression(
+        expr: String,
+        colMap: Map<String, Any?>,
+        varMap: Map<String, Any?> = emptyMap()
+    ): Any? {
         val e = expr.trim()
 
-        // 대소문자 무관 컬럼 조회 헬퍼
-        fun lookupCol(name: String): Any? =
-            colMap[name]
-                ?: colMap[name.lowercase()]
-                ?: colMap[name.uppercase()]
-                ?: colMap.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+        // 대소문자 무관 컬럼 조회 헬퍼 (colMap + varMap 통합 조회, prefix 자동 처리)
+        fun lookupCol(name: String): Any? {
+            // var.xxx prefix → varMap에서 조회
+            if (name.startsWith("var.", ignoreCase = true)) {
+                val vName = name.substring(4)
+                return varMap[vName] ?: varMap[vName.lowercase()]
+                    ?: varMap.entries.firstOrNull { it.key.equals(vName, ignoreCase = true) }?.value
+            }
+            // col.xxx / ctx.xxx prefix → prefix 제거 후 colMap 조회
+            val cleanName = if (name.startsWith("col.", ignoreCase = true) || name.startsWith("ctx.", ignoreCase = true))
+                name.substring(4) else name
+            return colMap[cleanName]
+                ?: varMap[cleanName]
+                ?: colMap[cleanName.lowercase()]
+                ?: colMap[cleanName.uppercase()]
+                ?: colMap.entries.firstOrNull { it.key.equals(cleanName, ignoreCase = true) }?.value
+        }
+
+        // var.xxx prefix — varMap 직접 조회
+        if (e.startsWith("var.", ignoreCase = true) && !e.contains('(')) {
+            val varName = e.substring(4)
+            return varMap[varName]
+                ?: varMap[varName.lowercase()]
+                ?: varMap.entries.firstOrNull { it.key.equals(varName, ignoreCase = true) }?.value
+        }
+
+        // col.xxx prefix — colMap 조회
+        if (e.startsWith("col.", ignoreCase = true) && !e.contains('(')) {
+            return lookupCol(e.substring(4))
+        }
+
+        // ctx.xxx prefix — colMap 조회 (향후 context 값으로 대체 예정)
+        if (e.startsWith("ctx.", ignoreCase = true) && !e.contains('(')) {
+            return lookupCol(e.substring(4))
+        }
 
         // 단순 컬럼 참조 (exact)
         if (colMap.containsKey(e)) return colMap[e]
 
-        // table.column 점 표기 처리 (row1.emp_id → emp_id)
+        // table.column 점 표기 처리 (row1.emp_id → emp_id, 레거시)
         if (e.contains('.') && !e.contains('(')) {
             val colName = e.substringAfterLast('.')
             return lookupCol(colName)

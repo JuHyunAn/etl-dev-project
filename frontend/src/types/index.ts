@@ -15,6 +15,14 @@ export type LinkType = 'ROW' | 'TRIGGER' | 'REJECT' | 'LOOKUP'
 export type TriggerCondition = 'ON_OK' | 'ON_ERROR'
 export type PortType = 'ROW' | 'TRIGGER' | 'REJECT' | 'LOOKUP'
 
+/** tMap 중간변수 (Var) 정의 */
+export interface VarRow {
+  id: string         // UI diff 추적용 안정 식별자 (예: "var-uuid")
+  name: string       // Expression에서 var.name 으로 참조
+  type: string       // VARCHAR / INTEGER / DECIMAL / DATE / TIMESTAMP / BOOLEAN 등
+  expression: string // DSL: col.xxx, var.xxx, ctx.xxx, 함수 등
+}
+
 export type ComponentType =
   | 'T_JDBC_INPUT' | 'T_FILE_INPUT'
   | 'T_MAP' | 'T_FILTER_ROW' | 'T_AGGREGATE_ROW' | 'T_SORT_ROW'

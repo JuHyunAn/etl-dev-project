@@ -10,6 +10,11 @@ interface SourceGroup {
   color: string;
 }
 
+interface VarItem {
+  name: string;
+  type: string;
+}
+
 interface Props {
   targetName: string;
   initialExpression: string;
@@ -17,6 +22,7 @@ interface Props {
   sourceColumn: string;
   sourceGroups: SourceGroup[];
   contextVars: string[];
+  vars?: VarItem[];
   onApply: (expr: string) => void;
   onClose: () => void;
 }
@@ -28,6 +34,7 @@ export default function ExpressionBuilderPopup({
   sourceColumn,
   sourceGroups,
   contextVars,
+  vars = [],
   onApply,
   onClose,
 }: Props) {
@@ -68,9 +75,9 @@ export default function ExpressionBuilderPopup({
     });
   }, []);
 
-  // 소스 컬럼 삽입: nodeLabel.colName
-  const insertSourceCol = (nodeLabel: string, colName: string) => {
-    insertAtCursor(`${nodeLabel}.${colName}`);
+  // 소스 컬럼 삽입: col.colName
+  const insertSourceCol = (_nodeLabel: string, colName: string) => {
+    insertAtCursor(`col.${colName}`);
   };
 
   // 스니펫 삽입: $col → sourceColumn 치환
@@ -78,9 +85,14 @@ export default function ExpressionBuilderPopup({
     insertAtCursor(applySnippet(template, sourceColumn));
   };
 
-  // Context 변수 삽입
+  // Context 변수 삽입: ctx.VAR
   const insertContextVar = (varName: string) => {
-    insertAtCursor(`\${${varName}}`);
+    insertAtCursor(`ctx.${varName}`);
+  };
+
+  // Var 삽입: var.varName
+  const insertVar = (varName: string) => {
+    insertAtCursor(`var.${varName}`);
   };
 
   const handleOk = () => onApply(expr.trim());
@@ -160,7 +172,7 @@ export default function ExpressionBuilderPopup({
         {/* ── Body: 3-panel ── */}
         <div className="flex-1 flex min-h-0">
 
-          {/* LEFT: 소스 컬럼 + Context 변수 */}
+          {/* LEFT: 소스 컬럼 + Variables + Context 변수 */}
           <div
             className="w-[22%] flex-shrink-0 flex flex-col overflow-hidden"
             style={{ borderRight: "1px solid #e2e8f0", background: "#ffffff" }}
@@ -205,12 +217,44 @@ export default function ExpressionBuilderPopup({
                 </div>
               ))}
 
-              {/* Context 변수 */}
-              {contextVars.length > 0 && (
-                <div>
+              {/* Variables (중간변수) */}
+              {vars.length > 0 && (
+                <div style={{ marginTop: 4 }}>
                   <div
                     className="px-2 py-1 flex items-center gap-1.5 sticky top-0"
-                    style={{ background: "#f0f9ff", borderLeft: "2px solid #0284c7", borderBottom: "1px solid #bae6fd", marginTop: 4 }}
+                    style={{ background: "#f5f3ff", borderLeft: "2px solid #7c3aed", borderBottom: "1px solid #e9d5ff" }}
+                  >
+                    <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: "#7c3aed" }}>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    <span className="text-[10px] font-semibold" style={{ color: "#7c3aed" }}>Variables</span>
+                  </div>
+                  {vars.map(v => (
+                    <div
+                      key={v.name}
+                      className="flex items-center justify-between px-2 py-0.5 cursor-pointer select-none"
+                      style={{ borderBottom: "1px solid #f8fafc", height: 24 }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "#f5f3ff")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "")}
+                      onClick={() => insertVar(v.name)}
+                    >
+                      <span className="text-[10px] font-mono truncate" style={{ color: "#7c3aed" }}>
+                        var.{v.name}
+                      </span>
+                      <span className="text-[9px] flex-shrink-0 ml-1" style={{ color: "#a78bfa" }}>
+                        {v.type}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Context 변수 */}
+              {contextVars.length > 0 && (
+                <div style={{ marginTop: 4 }}>
+                  <div
+                    className="px-2 py-1 flex items-center gap-1.5 sticky top-0"
+                    style={{ background: "#f0f9ff", borderLeft: "2px solid #0284c7", borderBottom: "1px solid #bae6fd" }}
                   >
                     <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: "#0284c7" }}>
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
@@ -226,7 +270,7 @@ export default function ExpressionBuilderPopup({
                       onMouseLeave={e => (e.currentTarget.style.background = "")}
                       onClick={() => insertContextVar(v)}
                     >
-                      <span className="text-[10px] font-mono" style={{ color: "#0369a1" }}>${"{" + v + "}"}</span>
+                      <span className="text-[10px] font-mono" style={{ color: "#0369a1" }}>ctx.{v}</span>
                     </div>
                   ))}
                 </div>

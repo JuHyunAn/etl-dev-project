@@ -12,6 +12,7 @@ import ExecutionsPage from './pages/ExecutionsPage'
 import SchedulesPage from './pages/SchedulesPage'
 import LoginPage from './pages/LoginPage'
 import AuthCallbackPage from './pages/AuthCallbackPage'
+import { Agentation } from "agentation";
 
 // client.ts에 auth 핸들러 등록
 function AuthBridge() {
@@ -67,6 +68,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        {import.meta.env.DEV && <Agentation />}
       </BrowserRouter>
     </AuthProvider>
   )
