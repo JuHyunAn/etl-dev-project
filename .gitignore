@@ -24,6 +24,7 @@ ENV/
 
 # Gradle (backend)
 .gradle/
+backend/build/
 
 # Frontend dependencies
 node_modules/
@@ -46,6 +47,12 @@ _agent/
 # Reference images (앱 미사용, 용량 큰 스크린샷)
 frontend/img/ai.png
 frontend/img/ex.png
+
+# Local environment-specific scripts (Windows, personal Java path)
+backend/java_path.txt
+backend/set_java.ps1
+backend/set_java_home.ps1
+backend/run.bat
 
 # Docker
 docker-compose.yml
