@@ -1,6 +1,6 @@
 # ETL Platform - Work History & Reference
 
-> 최종 업데이트: 2026-03-15
+> 최종 업데이트: 2026-03-19
 
 ---
 
@@ -834,6 +834,17 @@ Job은 `ir_json` (JSONB)으로 저장됨.
 
 ## 14. 변경 이력
 
+### 2026-03-19 — tMap Var/Expression/Validation 문서 고도화 + 개발모드 Agentation 연동
+
+#### tMap/Expression/Validation 문서 고도화
+- `tMap고도화.md`: Var prefix(`col.`/`var.`/`ctx.`) 규칙, Var ID 필수, Expression DSL 범위 및 AST 로드맵을 통합 가이드로 정리
+- `빌더.md`: tMap Expression Builder(팝업/통합 편집) 기능을 ETL Platform 현재 구조에 맞춰 축약·매핑 원칙으로 정리
+- `검증기능.md`: 데이터 검증(T_VALIDATE) 구현을 현재 엔진(Pushdown/FAP) Phase A/B/C(Count 기반→샘플 캡처→REJECT 장기)로 재구성
+
+#### 프론트 개발 편의(도구) 연동
+- `frontend/src/App.tsx`: 루트에 `Agentation`을 개발 모드에서만 렌더링되도록 주입
+- `frontend/src/vite-env.d.ts`: Vite `import.meta.env` 타입 에러 방지용 선언 추가
+
 ### 2026-03-13 — 이기종 DB 지원 PHASE 1~2
 
 #### 신규 파일
@@ -911,3 +922,47 @@ Job은 `ir_json` (JSONB)으로 저장됨.
 - **엣지 실행 결과**: rows수·시간 레이블, 색상 규칙
 - **Schema Browser**: 드래그 리사이즈 (80~600px)
 - **AI Agent**: Grok(xAI) 추가, patch 포맷 지원, 다중 JSON 블록 렌더링, 실행 결과 컨텍스트, 빠른 질문 버튼 재설계, 최신 메시지 하이라이트
+
+---
+
+## 15. Git 브랜치 설계 (프로젝트 기능 구성 단위)
+
+목표: 기능 단위로 브랜치를 잘게 쪼개서 PR/리뷰/롤백을 독립적으로 운영한다.
+
+권장 네이밍:
+- `feature/<backend|frontend|docs|tool>-<scope>`
+- `docs/<topic>`
+- `tool/<topic>`
+
+### 15-1 백엔드 기능 브랜치(서버 로직 중심)
+
+1. `feature/auth-jwt-oauth2`: 인증/인가(JWT 필터, OAuth2 핸들러)
+2. `feature/connections-crud-schema-api`: 커넥션 CRUD + 스키마 조회
+3. `feature/projects-jobs-crud-publish`: 프로젝트/잡 CRUD + publish
+4. `feature/execution-sql-pushdown`: 동일 DB 경로(SqlPushdownAdapter/Compiler)
+5. `feature/execution-fetch-and-process`: 이기종 DB 경로(FAP/FetchAndProcessExecutor)
+6. `feature/execution-logs-preview`: 실행 이력/로그/프리뷰 결과 처리
+7. `feature/watermark-incremental`: 증분 처리(watermark) 조회/저장 + 원자성
+8. `feature/transaction-trigger-loop`: T_DB_COMMIT/T_DB_ROLLBACK, Trigger, T_LOOP 실행
+9. `feature/scheduling-quartz`: Quartz 스케줄링(엔티티/서비스/컨트롤러)
+10. `feature/validation-t-validate`: T_VALIDATE(데이터 검증) 실행 로직
+
+### 15-2 프론트엔드 기능 브랜치(UX/화면 중심)
+
+1. `feature/ui-light-theme`: 라이트 테마 전환(AWS Glue Studio 스타일)
+2. `feature/job-designer-canvas`: Job Designer 캔버스/노드/엣지 UX
+3. `feature/tmap-mapping-editor`: T_MAP 매핑 편집기(MappingEditorModal)
+4. `feature/tmap-expression-builder`: ExpressionBuilderPopup/Builder UX 고도화
+5. `feature/schema-browser-table-picker`: Schema Browser + TablePickerModal
+6. `feature/execution-logs-ui`: SQL View / Execution Logs / Row Logs 패널 UI
+7. `feature/ai-agent-panel-ui`: AI Agent 패널 UI/상태/컨텍스트
+
+### 15-3 문서/가이드 브랜치(에이전트 기준)
+
+1. `docs/tmap-var-expression-dsl`: Var prefix/ID/DSL/AST 로드맵 문서화
+2. `docs/expression-builder-design`: Expression Builder/축약 원칙 문서화
+3. `docs/validation-t-validate-design`: 검증기능(T_VALIDATE) 설계 문서화
+
+### 15-4 도구/실험 브랜치
+
+1. `tool/agentation-dev-only`: Agentation을 개발 모드에서만 주입하는 도구 연동
