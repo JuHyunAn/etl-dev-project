@@ -707,7 +707,7 @@ export default function MappingEditorModal({
       appendLine(
         bezier(varRect.right - bodyRect.left, varRect.top + varRect.height / 2 - bodyRect.top,
                tgtRect.left - bodyRect.left, tgtRect.top + tgtRect.height / 2 - bodyRect.top),
-        "#7c3aed"
+        "#3b82f6"
       );
     });
   }, [activeMappings, sourceGroups, vars]);
@@ -1024,11 +1024,11 @@ export default function MappingEditorModal({
           {/* GAP: Source → Variables */}
           {/* <div className="w-[20px] flex-shrink-0" style={{ background: "#f1f5f9", boxShadow: "inset 2px 0 4px rgba(0,0,0,0.08), inset -2px 0 4px rgba(0,0,0,0.08)" }} /> */}
 
-          {/* MIDDLE: Variables 회색 영역 */}
+          {/* MIDDLE: Variables 영역 */}
           <div
             className="w-[40%] flex-shrink-0 flex flex-col"
             style={{
-              background: draggedTargetRowId ? "#fce7f3" : "#f1f5f9",
+              background: draggedTargetRowId ? "#fce7f3" : "#f8fafc",
               position: "relative",
               transition: "background 0.15s",
             }}
@@ -1053,9 +1053,9 @@ export default function MappingEditorModal({
               style={{
                 margin: "15px 50px",
                 background: "#ffffff",
-                border: "1px solid #e9d5ff",
+                border: "1px solid #e2e8f0",
                 borderRadius: 8,
-                boxShadow: "0 2px 10px rgba(124, 58, 237, 0.1)",
+                boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
                 overflow: "hidden",
                 flexShrink: 0,
                 position: "relative",
@@ -1065,19 +1065,19 @@ export default function MappingEditorModal({
               {/* Variables 헤더 */}
               <div
                 className="px-2 py-1.5 flex items-center gap-1.5"
-                style={{ background: "#7c3aed18", borderBottom: "1px solid #e9d5ff" }}
+                style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}
               >
-                <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: "#7c3aed" }}>
+                <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: "#64748b" }}>
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
                 </svg>
-                <p className="text-[11px] font-semibold flex-1" style={{ color: "#7c3aed" }}>Var</p>
-                <span className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: "#7c3aed22", color: "#7c3aed" }}>{vars.length}</span>
+                <p className="text-[11px] font-semibold flex-1" style={{ color: "#475569" }}>Var</p>
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: "#f1f5f9", color: "#64748b" }}>{vars.length}</span>
                 <button
                   onClick={() => setVars(prev => [...prev, { id: `var-${Date.now()}`, name: "", type: "VARCHAR", expression: "" }])}
                   className="flex items-center gap-1 px-1.5 py-0.5 rounded flex-shrink-0 transition-colors text-[10px] font-medium"
-                  style={{ color: "#7c3aed", background: "#7c3aed18" }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#7c3aed33"; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#7c3aed18"; }}
+                  style={{ color: "#475569", background: "#f1f5f9" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#e2e8f0"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#f1f5f9"; }}
                 >
                   <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
@@ -1090,12 +1090,12 @@ export default function MappingEditorModal({
               {vars.length > 0 && (
                 <div style={{ position: "relative" }}>
                   {/* 수직 구분선 */}
-                  <div className="absolute inset-y-0 pointer-events-none" style={{ left: "calc(33% + 18px)", width: 1, background: "#e9d5ff", zIndex: 2 }} />
-                  <div className="absolute inset-y-0 pointer-events-none" style={{ left: "calc(58% + 18px)", width: 1, background: "#e9d5ff", zIndex: 2 }} />
+                  <div className="absolute inset-y-0 pointer-events-none" style={{ left: "calc(33% + 18px)", width: 1, background: "#e2e8f0", zIndex: 2 }} />
+                  <div className="absolute inset-y-0 pointer-events-none" style={{ left: "calc(58% + 18px)", width: 1, background: "#e2e8f0", zIndex: 2 }} />
 
                   {/* 컬럼 헤더 */}
                   <div className="flex items-center py-1 flex-shrink-0 text-[9px] font-semibold uppercase tracking-wider"
-                    style={{ background: "#faf7ff", borderBottom: "1px solid #e9d5ff", color: "#a78bfa" }}>
+                    style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0", color: "#94a3b8" }}>
                     <span className="w-[18px] flex-shrink-0" />
                     <span className="overflow-hidden truncate" style={{ flex: "0 0 33%", paddingLeft: 8 }}>Expression</span>
                     <span className="overflow-hidden truncate" style={{ flex: "0 0 25%", paddingLeft: 8 }}>Type</span>
@@ -1114,12 +1114,12 @@ export default function MappingEditorModal({
                         style={{
                           height: 30,
                           background: "#ffffff",
-                          borderBottom: "1px solid #f3f0ff",
+                          borderBottom: "1px solid #f1f5f9",
                           cursor: draggedSource ? "copy" : "default",
                         }}
-                        onMouseEnter={e => { if (!draggedSource) e.currentTarget.style.background = "#faf7ff"; }}
+                        onMouseEnter={e => { if (!draggedSource) e.currentTarget.style.background = "#f8fafc"; }}
                         onMouseLeave={e => { e.currentTarget.style.background = "#ffffff"; }}
-                        onDragOver={e => { if (!draggedSource) return; e.preventDefault(); e.currentTarget.style.background = "#ede9fe"; }}
+                        onDragOver={e => { if (!draggedSource) return; e.preventDefault(); e.currentTarget.style.background = "#eff6ff"; }}
                         onDragLeave={e => { e.currentTarget.style.background = "#ffffff"; }}
                         onDrop={e => {
                           if (!draggedSource) return;
@@ -1142,9 +1142,9 @@ export default function MappingEditorModal({
                             >
                               <span className="w-2.5 h-2 rounded-full"
                                 style={{
-                                  background: leftActive ? "#7c3aed" : "#e9d5ff",
-                                  border: `1px solid ${leftActive ? "#7c3aed" : "#e9d5ff"}`,
-                                  boxShadow: leftActive ? "0 0 5px #7c3aed88" : undefined,
+                                  background: leftActive ? "#3b82f6" : "#e2e8f0",
+                                  border: `1px solid ${leftActive ? "#3b82f6" : "#e2e8f0"}`,
+                                  boxShadow: leftActive ? "0 0 5px #3b82f688" : undefined,
                                 }}
                               />
                             </span>
@@ -1159,13 +1159,13 @@ export default function MappingEditorModal({
                             onClick={e => e.stopPropagation()}
                             placeholder="col.xxx"
                             className="flex-1 min-w-0 bg-transparent text-[11px] font-mono focus:outline-none"
-                            style={{ color: v.expression ? "#7c3aed" : "#94a3b8", caretColor: "#1e293b" }}
+                            style={{ color: v.expression ? "#475569" : "#94a3b8", caretColor: "#1e293b" }}
                           />
                           <button
                             onClick={e => { e.stopPropagation(); setOpenVarBuilderIdx(idx); }}
                             className="flex-shrink-0 opacity-0 group-hover:opacity-100 px-1 py-0.5 rounded text-[9px] font-mono leading-none transition-all"
                             style={{ color: "#94a3b8", background: "transparent" }}
-                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#7c3aed"; (e.currentTarget as HTMLElement).style.background = "#f3e8ff"; }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#334155"; (e.currentTarget as HTMLElement).style.background = "#f1f5f9"; }}
                             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#94a3b8"; (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                             title="Expression Builder 열기"
                           >
@@ -1181,7 +1181,7 @@ export default function MappingEditorModal({
                               onChange={e => setVars(prev => prev.map((r, i) => i === idx ? { ...r, type: e.target.value } : r))}
                               onClick={e => e.stopPropagation()}
                               className="w-full bg-transparent focus:outline-none border-0 cursor-pointer leading-none pr-3"
-                              style={{ fontSize: 9, color: "#a78bfa", padding: 0, paddingRight: 10, appearance: "none", WebkitAppearance: "none" }}
+                              style={{ fontSize: 9, color: "#64748b", padding: 0, paddingRight: 10, appearance: "none", WebkitAppearance: "none" }}
                             >
                               {VAR_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                             </select>
@@ -1209,7 +1209,7 @@ export default function MappingEditorModal({
                                 onDragStart={e => e.preventDefault()}
                                 placeholder="var_name"
                                 className="w-full bg-transparent text-[11px] font-mono focus:outline-none leading-none"
-                                style={{ color: isDuplicate ? "#ef4444" : v.name ? "#5b21b6" : "#94a3b8", caretColor: "#1e293b", cursor: v.name ? "grab" : "text" }}
+                                style={{ color: isDuplicate ? "#ef4444" : v.name ? "#1e293b" : "#94a3b8", caretColor: "#1e293b", cursor: v.name ? "grab" : "text" }}
                               />
                             </div>
                           );
@@ -1222,7 +1222,7 @@ export default function MappingEditorModal({
                             onClick={e => { e.stopPropagation(); setVars(prev => { const a = [...prev]; [a[idx-1], a[idx]] = [a[idx], a[idx-1]]; return a; }); }}
                             className="p-0.5 rounded"
                             style={{ color: idx === 0 ? "#d1d5db" : "#94a3b8", lineHeight: 1 }}
-                            onMouseEnter={e => { if (idx !== 0) (e.currentTarget as HTMLElement).style.color = "#7c3aed"; }}
+                            onMouseEnter={e => { if (idx !== 0) (e.currentTarget as HTMLElement).style.color = "#475569"; }}
                             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = idx === 0 ? "#d1d5db" : "#94a3b8"; }}
                           >
                             <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" /></svg>
@@ -1232,7 +1232,7 @@ export default function MappingEditorModal({
                             onClick={e => { e.stopPropagation(); setVars(prev => { const a = [...prev]; [a[idx], a[idx+1]] = [a[idx+1], a[idx]]; return a; }); }}
                             className="p-0.5 rounded"
                             style={{ color: idx === vars.length - 1 ? "#d1d5db" : "#94a3b8", lineHeight: 1 }}
-                            onMouseEnter={e => { if (idx !== vars.length - 1) (e.currentTarget as HTMLElement).style.color = "#7c3aed"; }}
+                            onMouseEnter={e => { if (idx !== vars.length - 1) (e.currentTarget as HTMLElement).style.color = "#475569"; }}
                             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = idx === vars.length - 1 ? "#d1d5db" : "#94a3b8"; }}
                           >
                             <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" /></svg>
@@ -1267,9 +1267,9 @@ export default function MappingEditorModal({
                             >
                               <span className="w-2.5 h-2 rounded-full"
                                 style={{
-                                  background: rightActive ? "#7c3aed" : "#e9d5ff",
-                                  border: `1px solid ${rightActive ? "#7c3aed" : "#e9d5ff"}`,
-                                  boxShadow: rightActive ? "0 0 5px #7c3aed88" : undefined,
+                                  background: rightActive ? "#3b82f6" : "#e2e8f0",
+                                  border: `1px solid ${rightActive ? "#3b82f6" : "#e2e8f0"}`,
+                                  boxShadow: rightActive ? "0 0 5px #3b82f688" : undefined,
                                 }}
                               />
                             </span>
@@ -1405,7 +1405,7 @@ export default function MappingEditorModal({
                             {(() => {
                               const isVarExpr = /^var\./i.test(m.expression.trim());
                               const isConnected = !!m.sourceNodeId || isVarExpr;
-                              const dotColor = m.sourceNodeId ? color : isVarExpr ? "#7c3aed" : "#e2e8f0";
+                              const dotColor = m.sourceNodeId ? color : isVarExpr ? "#3b82f6" : "#e2e8f0";
                               return (
                                 <span
                                   className="w-3 flex-shrink-0 flex items-center justify-center"
@@ -1486,10 +1486,10 @@ export default function MappingEditorModal({
                                 value={m.expression}
                                 onChange={e => updateMapping(m.id, "expression", e.target.value)}
                                 onClick={e => e.stopPropagation()}
-                                placeholder={m.sourceColumn ? `${m.sourceNodeId ? (sourceGroups.find(g=>g.nodeId===m.sourceNodeId)?.nodeLabel ?? '') + '.' : ''}${m.sourceColumn}` : "expression"}
-                                className="flex-1 min-w-0 bg-transparent text-[11px] font-mono focus:outline-none"
+                                placeholder=""
+                                className="flex-1 min-w-0 bg-transparent text-[11px] font-mono font-bold focus:outline-none"
                                 style={{
-                                  color: m.expression ? "#7c3aed" : "#94a3b8",
+                                  color: /^var\./i.test(m.expression.trim()) ? "#3b82f6" : m.expression ? "#475569" : "#94a3b8",
                                   caretColor: "#1e293b",
                                   pointerEvents: draggedSource ? "none" : "auto",
                                 }}
